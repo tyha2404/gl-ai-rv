@@ -79,4 +79,32 @@ describe('GoogleChatNotifier', () => {
     assert.strictEqual(body.cardsV2[0].card.sections[0].widgets[0].decoratedText.text, payload.author);
     assert.strictEqual(body.cardsV2[0].card.sections[0].widgets[1].decoratedText.text, '3');
   });
+
+  it('should escape HTML characters in title, author and summary', async () => {
+    process.env.GOOGLE_CHAT_WEBHOOK_URL = 'http://webhook.url';
+    const notifier = new GoogleChatNotifier();
+    
+    let fetchOptions: any = {};
+    global.fetch = (async (url: string, options: any) => {
+      fetchOptions = options;
+      return { ok: true } as Response;
+    }) as any;
+
+    const payload: NotificationPayload = {
+      title: 'Review: <script>alert(1)</script>',
+      author: 'User <user@example.com>',
+      url: 'https://gitlab.com/mr/1',
+      summary: 'Found **2** issues & 1 *warning* in <file>.',
+      issueCount: 2
+    };
+
+    await notifier.sendReviewNotification(payload);
+
+    const body = JSON.parse(fetchOptions.body);
+    const card = body.cardsV2[0].card;
+    
+    assert.strictEqual(card.header.title, 'Review: &lt;script&gt;alert(1)&lt;/script&gt;');
+    assert.strictEqual(card.sections[0].widgets[0].decoratedText.text, 'User &lt;user@example.com&gt;');
+    assert.strictEqual(card.sections[1].widgets[0].textParagraph.text, 'Found <b>2</b> issues &amp; 1 <i>warning</i> in &lt;file&gt;.');
+  });
 });

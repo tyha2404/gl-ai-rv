@@ -13,6 +13,23 @@ export class GoogleChatNotifier {
     this.webhookUrl = process.env.GOOGLE_CHAT_WEBHOOK_URL;
   }
 
+  private escapeHtml(text: string): string {
+    return text
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;");
+  }
+
+  private formatSummary(text: string): string {
+    // Escape first
+    let escaped = this.escapeHtml(text);
+    // Convert **bold** to <b>bold</b>
+    escaped = escaped.replace(/\*\*(.*?)\*\*/g, "<b>$1</b>");
+    // Convert *italic* to <i>italic</i>
+    escaped = escaped.replace(/\*(.*?)\*/g, "<i>$1</i>");
+    return escaped;
+  }
+
   async sendReviewNotification(data: NotificationPayload): Promise<void> {
     if (!this.webhookUrl) {
       console.warn("GOOGLE_CHAT_WEBHOOK_URL is not defined. Skipping notification.");
@@ -25,10 +42,8 @@ export class GoogleChatNotifier {
           cardId: "review-notification",
           card: {
             header: {
-              title: data.title,
+              title: this.escapeHtml(data.title),
               subtitle: "AI Review Completed",
-              imageUrl: "https://fonts.gstatic.com/s/i/googlematerialicons/description/v11/24px.svg",
-              imageType: "CIRCLE",
             },
             sections: [
               {
@@ -36,7 +51,7 @@ export class GoogleChatNotifier {
                   {
                     decoratedText: {
                       topLabel: "Author",
-                      text: data.author,
+                      text: this.escapeHtml(data.author),
                       startIcon: { knownIcon: "PERSON" },
                     },
                   },
@@ -54,7 +69,7 @@ export class GoogleChatNotifier {
                 widgets: [
                   {
                     textParagraph: {
-                      text: data.summary,
+                      text: this.formatSummary(data.summary),
                     },
                   },
                 ],
