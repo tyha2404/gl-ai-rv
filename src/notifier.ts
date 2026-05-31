@@ -3,7 +3,15 @@ export interface NotificationPayload {
   author: string;
   url: string;
   summary: string;
-  issueCount: number;
+  repoName: string;
+  mrId: number;
+  targetBranch: string;
+  comments: {
+    path: string;
+    line: number;
+    text: string;
+    suggestion?: string;
+  }[];
 }
 
 export class GoogleChatNotifier {
@@ -36,6 +44,100 @@ export class GoogleChatNotifier {
       return;
     }
 
+    const sections: any[] = [
+      {
+        widgets: [
+          {
+            decoratedText: {
+              topLabel: "Repository",
+              text: `<b>${this.escapeHtml(data.repoName)}</b>`,
+              startIcon: { knownIcon: "STAR" },
+            },
+          },
+          {
+            decoratedText: {
+              topLabel: "Merge Request",
+              text: `#${data.mrId} → <code>${this.escapeHtml(data.targetBranch)}</code>`,
+              startIcon: { knownIcon: "DESCRIPTION" },
+            },
+          },
+          {
+            decoratedText: {
+              topLabel: "Author",
+              text: this.escapeHtml(data.author),
+              startIcon: { knownIcon: "PERSON" },
+            },
+          },
+          {
+            decoratedText: {
+              topLabel: "Issues Found",
+              text: `<b>${data.comments.length}</b>`,
+              startIcon: { knownIcon: "TICKET" },
+            },
+          },
+        ],
+      },
+      {
+        header: "AI Summary",
+        widgets: [
+          {
+            textParagraph: {
+              text: this.formatSummary(data.summary),
+            },
+          },
+        ],
+      },
+    ];
+
+    // Add sections for each comment (limit to top 10 to avoid payload limits)
+    const displayComments = data.comments.slice(0, 10);
+    if (displayComments.length > 0) {
+      const commentWidgets = displayComments.map((c) => ({
+        decoratedText: {
+          topLabel: `${c.path} (Line ${c.line})`,
+          text: this.formatSummary(c.text),
+          wrapText: true,
+          bottomLabel: c.suggestion ? `Suggestion: ${this.escapeHtml(c.suggestion)}` : undefined,
+        },
+      }));
+
+      sections.push({
+        header: "Detailed Issues",
+        widgets: commentWidgets,
+      });
+    }
+
+    if (data.comments.length > 10) {
+      sections.push({
+        widgets: [
+          {
+            textParagraph: {
+              text: `<i>... and ${data.comments.length - 10} more issues. See GitLab for details.</i>`,
+            },
+          },
+        ],
+      });
+    }
+
+    sections.push({
+      widgets: [
+        {
+          buttonList: {
+            buttons: [
+              {
+                text: "View on GitLab",
+                onClick: {
+                  openLink: {
+                    url: data.url,
+                  },
+                },
+              },
+            ],
+          },
+        },
+      ],
+    });
+
     const card = {
       cardsV2: [
         {
@@ -45,54 +147,7 @@ export class GoogleChatNotifier {
               title: this.escapeHtml(data.title),
               subtitle: "AI Review Completed",
             },
-            sections: [
-              {
-                widgets: [
-                  {
-                    decoratedText: {
-                      topLabel: "Author",
-                      text: this.escapeHtml(data.author),
-                      startIcon: { knownIcon: "PERSON" },
-                    },
-                  },
-                  {
-                    decoratedText: {
-                      topLabel: "Issues Found",
-                      text: `${data.issueCount}`,
-                      startIcon: { knownIcon: "DESCRIPTION" },
-                    },
-                  },
-                ],
-              },
-              {
-                header: "AI Summary",
-                widgets: [
-                  {
-                    textParagraph: {
-                      text: this.formatSummary(data.summary),
-                    },
-                  },
-                ],
-              },
-              {
-                widgets: [
-                  {
-                    buttonList: {
-                      buttons: [
-                        {
-                          text: "View on GitLab",
-                          onClick: {
-                            openLink: {
-                              url: data.url,
-                            },
-                          },
-                        },
-                      ],
-                    },
-                  },
-                ],
-              },
-            ],
+            sections: sections,
           },
         },
       ],

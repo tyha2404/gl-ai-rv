@@ -40,7 +40,13 @@ async function handleAIReview(
   iid: number,
   diffs: any[],
   diffRefs: any,
-  mrInfo: { title: string; author: string; url: string },
+  mrInfo: {
+    title: string;
+    author: string;
+    url: string;
+    repoName: string;
+    targetBranch: string;
+  },
 ) {
   try {
     const filteredDiffs = filterDiffs(diffs);
@@ -53,66 +59,20 @@ async function handleAIReview(
       `AI Review completed for MR #${iid}. Summary: ${JSON.stringify(reviewResult.summary)}. Comments: ${JSON.stringify(reviewResult.comments)}`,
     );
 
-    if (!reviewResult.comments || reviewResult.comments.length === 0) {
-      await gitlab.addLabel(projectId, iid, ["AI-Reviewed"]);
-      // Send notification even if no issues found
-      await notifier.sendReviewNotification({
-        title: mrInfo.title,
-        author: mrInfo.author,
-        url: mrInfo.url,
-        summary: reviewResult.summary,
-        issueCount: 0,
-      });
-      return;
-    }
-
-    console.log(
-      `Found ${reviewResult.comments.length} issues for MR #${iid}. Posting comments...`,
-    );
-
-    // 1. Post Summary
-    await gitlab.postComment(
-      projectId,
-      iid,
-      `### 🤖 AI Đánh giá & Soát lỗi mã nguồn (GLM-4)\n\n${reviewResult.summary}\n\n---\n*Bot được vận hành bởi Zhipu AI*`,
-    );
-
-    // 2. Post Line Comments với cơ chế Fallback
-    for (const comment of reviewResult.comments) {
-      try {
-        const body = `**Gợi ý cho \`${comment.path}\` (dòng ${comment.line}):**\n${comment.text}${comment.suggestion ? `\n\n\`\`\`\n${comment.suggestion}\n\`\`\`` : ""}`;
-
-        await gitlab.postLineComment(
-          projectId,
-          iid,
-          {
-            body: body,
-            path: comment.path,
-            line: comment.line,
-            type: "new",
-          },
-          diffRefs,
-        );
-      } catch (e: any) {
-        console.warn(
-          `Could not post line comment on ${comment.path}:${comment.line}. Falling back to general comment.`,
-        );
-        // Fallback: Nếu không thể post line comment (do sai dòng), post thành comment chung
-        const fallbackBody = `**Gợi ý bổ sung cho \`${comment.path}\` (dòng ${comment.line}):**\n${comment.text}`;
-        await gitlab.postComment(projectId, iid, fallbackBody);
-      }
-    }
-
-    await gitlab.addLabel(projectId, iid, ["AI-Reviewed"]);
-
-    // Send notification to Google Chat
+    // Send notification to Google Chat (Detailed)
+    console.log(`Sending enriched notification to Google Chat for MR #${iid}`);
     await notifier.sendReviewNotification({
       title: mrInfo.title,
       author: mrInfo.author,
       url: mrInfo.url,
+      repoName: mrInfo.repoName,
+      mrId: iid,
+      targetBranch: mrInfo.targetBranch,
       summary: reviewResult.summary,
-      issueCount: reviewResult.comments.length,
+      comments: reviewResult.comments || [],
     });
+
+    console.log(`Found ${reviewResult.comments.length} issues for MR #${iid}.`);
 
     console.log(`AI Review for MR #${iid} completed.`);
   } catch (error) {
@@ -126,10 +86,13 @@ app.post("/webhook", async (req, res) => {
 
   if (event === "Merge Request Hook") {
     const { object_attributes, project, user } = payload;
-    const { iid, action, state, title, web_url } = object_attributes;
+    const { iid, action, state, title, source, target_branch } =
+      object_attributes;
     const projectId = project.id;
+    const repoName = project.name;
 
-    if (state === "opened") {
+    // Trigger on open, reopen or code update
+    if (state === "opened" || state === "reopened" || action === "update") {
       try {
         const mr = await gitlab.getMergeRequest(projectId, iid);
         const diffs = await gitlab.getMergeRequestDiff(projectId, iid);
@@ -139,7 +102,9 @@ app.post("/webhook", async (req, res) => {
         const mrInfo = {
           title: title,
           author: user.name,
-          url: web_url,
+          url: source.http_url,
+          repoName: repoName,
+          targetBranch: target_branch,
         };
 
         // Quan trọng: Sử dụng diff_refs trực tiếp từ MR để đảm bảo SHA mới nhất

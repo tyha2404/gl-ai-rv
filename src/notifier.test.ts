@@ -36,7 +36,7 @@ describe('GoogleChatNotifier', () => {
       author: 'Tester',
       url: 'http://example.com',
       summary: 'Test summary',
-      issueCount: 0
+      comments: []
     });
     
     console.warn = originalWarn;
@@ -62,9 +62,11 @@ describe('GoogleChatNotifier', () => {
     const payload: NotificationPayload = {
       title: 'Merge Request Review',
       author: 'John Doe',
-      url: 'https://gitlab.com/mr/1',
+      url: 'http://gitlab.com/mr/1',
       summary: 'Fixed some bugs',
-      issueCount: 3
+      comments: [
+        { path: 'file.ts', line: 10, text: 'Typo here' }
+      ]
     };
 
     await notifier.sendReviewNotification(payload);
@@ -77,10 +79,12 @@ describe('GoogleChatNotifier', () => {
     assert.ok(body.cardsV2);
     assert.strictEqual(body.cardsV2[0].card.header.title, payload.title);
     assert.strictEqual(body.cardsV2[0].card.sections[0].widgets[0].decoratedText.text, payload.author);
-    assert.strictEqual(body.cardsV2[0].card.sections[0].widgets[1].decoratedText.text, '3');
+    assert.strictEqual(body.cardsV2[0].card.sections[0].widgets[1].decoratedText.text, '1');
+    assert.strictEqual(body.cardsV2[0].card.sections[2].header, 'Detailed Issues');
+    assert.strictEqual(body.cardsV2[0].card.sections[2].widgets[0].decoratedText.topLabel, 'file.ts (Line 10)');
   });
 
-  it('should escape HTML characters in title, author and summary', async () => {
+  it('should escape HTML characters and format markdown-like syntax', async () => {
     process.env.GOOGLE_CHAT_WEBHOOK_URL = 'http://webhook.url';
     const notifier = new GoogleChatNotifier();
     
@@ -93,9 +97,11 @@ describe('GoogleChatNotifier', () => {
     const payload: NotificationPayload = {
       title: 'Review: <script>alert(1)</script>',
       author: 'User <user@example.com>',
-      url: 'https://gitlab.com/mr/1',
-      summary: 'Found **2** issues & 1 *warning* in <file>.',
-      issueCount: 2
+      url: 'http://gitlab.com/mr/1',
+      summary: 'Found **2** issues in <file>.',
+      comments: [
+        { path: 'test.ts', line: 5, text: 'Fix *this* part.' }
+      ]
     };
 
     await notifier.sendReviewNotification(payload);
@@ -105,6 +111,7 @@ describe('GoogleChatNotifier', () => {
     
     assert.strictEqual(card.header.title, 'Review: &lt;script&gt;alert(1)&lt;/script&gt;');
     assert.strictEqual(card.sections[0].widgets[0].decoratedText.text, 'User &lt;user@example.com&gt;');
-    assert.strictEqual(card.sections[1].widgets[0].textParagraph.text, 'Found <b>2</b> issues &amp; 1 <i>warning</i> in &lt;file&gt;.');
+    assert.strictEqual(card.sections[1].widgets[0].textParagraph.text, 'Found <b>2</b> issues in &lt;file&gt;.');
+    assert.strictEqual(card.sections[2].widgets[0].decoratedText.text, 'Fix <i>this</i> part.');
   });
 });
