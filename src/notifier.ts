@@ -46,6 +46,7 @@ export class GoogleChatNotifier {
 
     const sections: any[] = [
       {
+        header: "📋 Thông tin Merge Request",
         widgets: [
           {
             decoratedText: {
@@ -68,21 +69,21 @@ export class GoogleChatNotifier {
               startIcon: { knownIcon: "PERSON" },
             },
           },
-          {
-            decoratedText: {
-              topLabel: "Issues Found",
-              text: `<b>${data.comments.length}</b>`,
-              startIcon: { knownIcon: "TICKET" },
-            },
-          },
         ],
       },
       {
-        header: "AI Summary",
+        header: "🤖 AI Summary",
         widgets: [
           {
             textParagraph: {
               text: this.formatSummary(data.summary),
+            },
+          },
+          {
+            decoratedText: {
+              topLabel: "Issues Found",
+              text: `<b>${data.comments.length}</b> issues detected`,
+              startIcon: { knownIcon: "TICKET" },
             },
           },
         ],
@@ -92,17 +93,48 @@ export class GoogleChatNotifier {
     // Add sections for each comment (limit to top 10 to avoid payload limits)
     const displayComments = data.comments.slice(0, 10);
     if (displayComments.length > 0) {
-      const commentWidgets = displayComments.map((c) => ({
-        decoratedText: {
-          topLabel: `${c.path} (Line ${c.line})`,
-          text: this.formatSummary(c.text),
-          wrapText: true,
-          bottomLabel: c.suggestion ? `Suggestion: ${this.escapeHtml(c.suggestion)}` : undefined,
-        },
-      }));
+      const commentWidgets: any[] = [];
+      
+      displayComments.forEach((c, index) => {
+        // Path and Line on its own line for readability
+        commentWidgets.push({
+          decoratedText: {
+            topLabel: `Issue #${index + 1}`,
+            text: `📍 <code>${this.escapeHtml(c.path)}</code>\nLine: <b>${c.line}</b>`,
+            wrapText: true,
+          }
+        });
+
+        // The actual comment text
+        commentWidgets.push({
+          textParagraph: {
+            text: this.formatSummary(c.text)
+          }
+        });
+
+        // Suggestion if available, in a code block style
+        if (c.suggestion) {
+          commentWidgets.push({
+            decoratedText: {
+              topLabel: "Gợi ý sửa đổi:",
+              text: `<code>${this.escapeHtml(c.suggestion)}</code>`,
+              wrapText: true,
+            }
+          });
+        }
+
+        // Add a small divider text if not the last item
+        if (index < displayComments.length - 1) {
+          commentWidgets.push({
+            textParagraph: {
+              text: "<br>---"
+            }
+          });
+        }
+      });
 
       sections.push({
-        header: "Detailed Issues",
+        header: "🔍 Chi tiết các vấn đề",
         widgets: commentWidgets,
       });
     }
@@ -112,7 +144,7 @@ export class GoogleChatNotifier {
         widgets: [
           {
             textParagraph: {
-              text: `<i>... and ${data.comments.length - 10} more issues. See GitLab for details.</i>`,
+              text: `<i>... và ${data.comments.length - 10} vấn đề khác. Vui lòng kiểm tra trên GitLab.</i>`,
             },
           },
         ],
@@ -125,7 +157,7 @@ export class GoogleChatNotifier {
           buttonList: {
             buttons: [
               {
-                text: "View on GitLab",
+                text: "Xem trên GitLab",
                 onClick: {
                   openLink: {
                     url: data.url,
