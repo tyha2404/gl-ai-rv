@@ -2,6 +2,7 @@ import dotenv from "dotenv";
 import express from "express";
 import { AIClient } from "./ai";
 import { GitLabClient } from "./gitlab";
+import { GoogleChatNotifier } from "./notifier";
 
 dotenv.config();
 
@@ -9,6 +10,7 @@ const app = express();
 const port = process.env.PORT || 3000;
 const gitlab = new GitLabClient();
 const ai = new AIClient();
+const notifier = new GoogleChatNotifier();
 
 app.use(express.json());
 
@@ -38,6 +40,7 @@ async function handleAIReview(
   iid: number,
   diffs: any[],
   diffRefs: any,
+  mrInfo: { title: string; author: string; url: string },
 ) {
   try {
     const filteredDiffs = filterDiffs(diffs);
@@ -52,6 +55,14 @@ async function handleAIReview(
 
     if (!reviewResult.comments || reviewResult.comments.length === 0) {
       await gitlab.addLabel(projectId, iid, ["AI-Reviewed"]);
+      // Send notification even if no issues found
+      await notifier.sendReviewNotification({
+        title: mrInfo.title,
+        author: mrInfo.author,
+        url: mrInfo.url,
+        summary: reviewResult.summary,
+        issueCount: 0,
+      });
       return;
     }
 
@@ -93,6 +104,16 @@ async function handleAIReview(
     }
 
     await gitlab.addLabel(projectId, iid, ["AI-Reviewed"]);
+
+    // Send notification to Google Chat
+    await notifier.sendReviewNotification({
+      title: mrInfo.title,
+      author: mrInfo.author,
+      url: mrInfo.url,
+      summary: reviewResult.summary,
+      issueCount: reviewResult.comments.length,
+    });
+
     console.log(`AI Review for MR #${iid} completed.`);
   } catch (error) {
     console.error("Error in handleAIReview:", error);
@@ -104,8 +125,8 @@ app.post("/webhook", async (req, res) => {
   const payload = req.body;
 
   if (event === "Merge Request Hook") {
-    const { object_attributes, project } = payload;
-    const { iid, action, state } = object_attributes;
+    const { object_attributes, project, user } = payload;
+    const { iid, action, state, title, web_url } = object_attributes;
     const projectId = project.id;
 
     if (state === "opened") {
@@ -114,8 +135,15 @@ app.post("/webhook", async (req, res) => {
         const diffs = await gitlab.getMergeRequestDiff(projectId, iid);
 
         res.status(200).send("Processing");
+
+        const mrInfo = {
+          title: title,
+          author: user.name,
+          url: web_url,
+        };
+
         // Quan trọng: Sử dụng diff_refs trực tiếp từ MR để đảm bảo SHA mới nhất
-        handleAIReview(projectId, iid, diffs, mr.diff_refs);
+        handleAIReview(projectId, iid, diffs, mr.diff_refs, mrInfo);
       } catch (error) {
         console.error("Webhook processing error:", error);
         res.status(500).send("Error");

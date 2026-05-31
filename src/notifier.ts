@@ -1,7 +1,3 @@
-import dotenv from "dotenv";
-
-dotenv.config();
-
 export interface NotificationPayload {
   title: string;
   author: string;
