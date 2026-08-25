@@ -98,13 +98,6 @@ keys/
 
 ai-knownlege/*.hmtl
 
-ai-knownlege
-*.md
-!README.md
-!CRON-JOBS-TIMELINE.md
-!GEMINI.md
-!docs/superpowers/specs/*.md
-
 docs/*
 !docs/superpowers/
 
