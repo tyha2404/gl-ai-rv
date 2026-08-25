@@ -46,6 +46,7 @@ async function handleAIReview(
     url: string;
     repoName: string;
     targetBranch: string;
+    description?: string;
   },
 ) {
   try {
@@ -53,13 +54,19 @@ async function handleAIReview(
     if (filteredDiffs.length === 0) return;
 
     console.log(`Starting AI Review for MR #${iid}...`);
-    const reviewResult = await ai.reviewCode(filteredDiffs);
+    const reviewResult = await ai.reviewCode(filteredDiffs, {
+      title: mrInfo.title,
+      author: mrInfo.author,
+      repoName: mrInfo.repoName,
+      targetBranch: mrInfo.targetBranch,
+      description: mrInfo.description,
+    });
 
     console.log(
-      `AI Review completed for MR #${iid}. Summary: ${JSON.stringify(reviewResult.summary)}. Comments: ${JSON.stringify(reviewResult.comments)}`,
+      `AI Review completed for MR #${iid}. Verdict: ${reviewResult.verdict}, Risk: ${reviewResult.riskLevel}, Issues: ${reviewResult.comments.length}`,
     );
 
-    // Send notification to Google Chat (Detailed)
+    // Gửi báo cáo phân tích chi tiết về Google Chat
     console.log(`Sending enriched notification to Google Chat for MR #${iid}`);
     await notifier.sendReviewNotification({
       title: mrInfo.title,
@@ -69,10 +76,10 @@ async function handleAIReview(
       mrId: iid,
       targetBranch: mrInfo.targetBranch,
       summary: reviewResult.summary,
+      verdict: reviewResult.verdict,
+      riskLevel: reviewResult.riskLevel,
       comments: reviewResult.comments || [],
     });
-
-    console.log(`Found ${reviewResult.comments.length} issues for MR #${iid}.`);
 
     console.log(`AI Review for MR #${iid} completed.`);
   } catch (error) {
@@ -86,7 +93,7 @@ app.post("/webhook", async (req, res) => {
 
   if (event === "Merge Request Hook") {
     const { object_attributes, project, user } = payload;
-    const { iid, action, state, title, source, target_branch } =
+    const { iid, action, state, title, description, source, target_branch } =
       object_attributes;
     const projectId = project.id;
     const repoName = project.name;
@@ -105,9 +112,9 @@ app.post("/webhook", async (req, res) => {
           url: source.http_url,
           repoName: repoName,
           targetBranch: target_branch,
+          description: description || undefined,
         };
 
-        // Quan trọng: Sử dụng diff_refs trực tiếp từ MR để đảm bảo SHA mới nhất
         handleAIReview(projectId, iid, diffs, mr.diff_refs, mrInfo);
       } catch (error) {
         console.error("Webhook processing error:", error);

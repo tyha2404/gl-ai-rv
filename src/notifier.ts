@@ -1,3 +1,5 @@
+import { AIReviewComment } from "./ai";
+
 export interface NotificationPayload {
   title: string;
   author: string;
@@ -6,12 +8,9 @@ export interface NotificationPayload {
   repoName: string;
   mrId: number;
   targetBranch: string;
-  comments: {
-    path: string;
-    line: number;
-    text: string;
-    suggestion?: string;
-  }[];
+  verdict?: ("APPROVE" | "REQUEST_CHANGES" | "COMMENT") | undefined;
+  riskLevel?: ("LOW" | "MEDIUM" | "HIGH") | undefined;
+  comments: AIReviewComment[];
 }
 
 export class GoogleChatNotifier {
@@ -29,13 +28,50 @@ export class GoogleChatNotifier {
   }
 
   private formatSummary(text: string): string {
-    // Escape first
     let escaped = this.escapeHtml(text);
     // Convert **bold** to <b>bold</b>
     escaped = escaped.replace(/\*\*(.*?)\*\*/g, "<b>$1</b>");
     // Convert *italic* to <i>italic</i>
     escaped = escaped.replace(/\*(.*?)\*/g, "<i>$1</i>");
+    // Convert `code` to <code>code</code>
+    escaped = escaped.replace(/`([^`]+)`/g, "<code>$1</code>");
     return escaped;
+  }
+
+  private getSeverityBadge(severity: string): string {
+    switch (severity) {
+      case "CRITICAL":
+        return "🔴 <b>CRITICAL</b>";
+      case "WARNING":
+        return "🟡 <b>WARNING</b>";
+      case "SUGGESTION":
+      default:
+        return "🔵 <b>SUGGESTION</b>";
+    }
+  }
+
+  private getVerdictBadge(verdict?: string): string {
+    switch (verdict) {
+      case "APPROVE":
+        return "✅ <b>APPROVE</b> (Code đạt chuẩn)";
+      case "REQUEST_CHANGES":
+        return "❌ <b>REQUEST CHANGES</b> (Cần sửa lỗi trước khi merge)";
+      case "COMMENT":
+      default:
+        return "💬 <b>COMMENT</b> (Có một số góp ý)";
+    }
+  }
+
+  private getRiskBadge(risk?: string): string {
+    switch (risk) {
+      case "HIGH":
+        return "🚨 <b>HIGH RISK</b>";
+      case "MEDIUM":
+        return "⚠️ <b>MEDIUM RISK</b>";
+      case "LOW":
+      default:
+        return "🟢 <b>LOW RISK</b>";
+    }
   }
 
   async sendReviewNotification(data: NotificationPayload): Promise<void> {
@@ -72,8 +108,22 @@ export class GoogleChatNotifier {
         ],
       },
       {
-        header: "🤖 AI Summary",
+        header: "🤖 AI Review Assessment",
         widgets: [
+          {
+            decoratedText: {
+              topLabel: "Kết luận (Verdict)",
+              text: this.getVerdictBadge(data.verdict),
+              startIcon: { knownIcon: "CONFIRMATION_NUMBER_ICON" },
+            },
+          },
+          {
+            decoratedText: {
+              topLabel: "Mức độ rủi ro (Risk Level)",
+              text: this.getRiskBadge(data.riskLevel),
+              startIcon: { knownIcon: "FLIGHT_DEPARTURE" },
+            },
+          },
           {
             textParagraph: {
               text: this.formatSummary(data.summary),
@@ -81,8 +131,8 @@ export class GoogleChatNotifier {
           },
           {
             decoratedText: {
-              topLabel: "Issues Found",
-              text: `<b>${data.comments.length}</b> issues detected`,
+              topLabel: "Tổng số vấn đề phát hiện",
+              text: `<b>${data.comments.length}</b> vấn đề`,
               startIcon: { knownIcon: "TICKET" },
             },
           },
@@ -90,51 +140,50 @@ export class GoogleChatNotifier {
       },
     ];
 
-    // Add sections for each comment (limit to top 10 to avoid payload limits)
+    // Add sections for each comment (limit to top 10)
     const displayComments = data.comments.slice(0, 10);
     if (displayComments.length > 0) {
       const commentWidgets: any[] = [];
-      
+
       displayComments.forEach((c, index) => {
-        // Path and Line on its own line for readability
+        const severityBadge = this.getSeverityBadge(c.severity || "SUGGESTION");
+        const category = c.category ? `[${this.escapeHtml(c.category)}] ` : "";
+
         commentWidgets.push({
           decoratedText: {
-            topLabel: `Issue #${index + 1}`,
-            text: `📍 <code>${this.escapeHtml(c.path)}</code>\nLine: <b>${c.line}</b>`,
+            topLabel: `Issue #${index + 1} - ${category}${severityBadge}`,
+            text: `📍 <code>${this.escapeHtml(c.path)}</code> (Line <b>${c.line}</b>)`,
             wrapText: true,
-          }
+          },
         });
 
-        // The actual comment text
         commentWidgets.push({
           textParagraph: {
-            text: this.formatSummary(c.text)
-          }
+            text: this.formatSummary(c.text),
+          },
         });
 
-        // Suggestion if available, in a code block style
-        if (c.suggestion) {
+        if (c.suggestion && c.suggestion.trim()) {
           commentWidgets.push({
             decoratedText: {
-              topLabel: "Gợi ý sửa đổi:",
-              text: `<code>${this.escapeHtml(c.suggestion)}</code>`,
+              topLabel: "💡 Đề xuất code sửa đổi:",
+              text: `<pre>${this.escapeHtml(c.suggestion.trim())}</pre>`,
               wrapText: true,
-            }
+            },
           });
         }
 
-        // Add a small divider text if not the last item
         if (index < displayComments.length - 1) {
           commentWidgets.push({
             textParagraph: {
-              text: "<br>---"
-            }
+              text: "<br>---",
+            },
           });
         }
       });
 
       sections.push({
-        header: "🔍 Chi tiết các vấn đề",
+        header: "🔍 Chi tiết vấn đề & Gợi ý sửa",
         widgets: commentWidgets,
       });
     }
@@ -144,7 +193,7 @@ export class GoogleChatNotifier {
         widgets: [
           {
             textParagraph: {
-              text: `<i>... và ${data.comments.length - 10} vấn đề khác. Vui lòng kiểm tra trên GitLab.</i>`,
+              text: `<i>... và còn ${data.comments.length - 10} vấn đề khác.</i>`,
             },
           },
         ],
@@ -177,7 +226,7 @@ export class GoogleChatNotifier {
           card: {
             header: {
               title: this.escapeHtml(data.title),
-              subtitle: "AI Review Completed",
+              subtitle: "GitLab AI Code Review",
             },
             sections: sections,
           },

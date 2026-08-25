@@ -3,14 +3,31 @@ import OpenAI from "openai";
 
 dotenv.config();
 
+export type Severity = "CRITICAL" | "WARNING" | "SUGGESTION";
+export type Category = "SECURITY" | "BUG" | "PERFORMANCE" | "CLEAN_CODE";
+
+export interface AIReviewComment {
+  path: string;
+  line: number;
+  severity: Severity;
+  category: Category;
+  text: string;
+  suggestion?: string | undefined;
+}
+
 export interface AIReviewResult {
   summary: string;
-  comments: {
-    path: string;
-    line: number;
-    text: string;
-    suggestion?: string;
-  }[];
+  verdict?: ("APPROVE" | "REQUEST_CHANGES" | "COMMENT") | undefined;
+  riskLevel?: ("LOW" | "MEDIUM" | "HIGH") | undefined;
+  comments: AIReviewComment[];
+}
+
+export interface MRContext {
+  title: string;
+  author: string;
+  repoName: string;
+  targetBranch: string;
+  description?: string | undefined;
 }
 
 export class AIClient {
@@ -31,64 +48,133 @@ export class AIClient {
     this.model = "glm-4.7-flash"; // Hoặc model cụ thể bạn muốn
   }
 
-  async reviewCode(diffs: any[]): Promise<AIReviewResult> {
-    const systemPrompt = `
-      Bạn là một Tech Lead / Staff Software Engineer kỳ cựu với tiêu chuẩn kỹ thuật cực kỳ khắt khe và nghiêm túc.
-      Nhiệm vụ của bạn là thực hiện Code Review chuyên sâu cho các Merge Request từ các lập trình viên.
-      Bạn không chấp nhận mã nguồn viết ẩu, thiếu an toàn, vi phạm quy chuẩn kiến trúc hoặc có nguy cơ gây lỗi ở môi trường production.
-      Bạn luôn trả về kết quả dưới định dạng JSON hợp lệ theo đúng cấu trúc được yêu cầu.
-    `.trim();
+  /**
+   * Parse git unified diff thành định dạng có số dòng chính xác cho file mới (new_path)
+   */
+  private formatDiffWithLineNumbers(diffs: any[]): string {
+    const formattedFiles: string[] = [];
 
-    const prompt = `
-      Bạn đang thực hiện rà soát mã nguồn (Code Review) ở vai trò Tech Lead. Hãy soi xét thật kỹ lưỡng, khắt khe và chi tiết từng thay đổi trong GitLab Merge Request dưới đây.
+    for (const diff of diffs) {
+      const filePath = diff.new_path || diff.old_path;
+      if (!diff.diff) continue;
 
-      TIÊU CHÍ REVIEW BẮT BUỘC (ĐÁNH GIÁ CỰC KỲ NGHIÊM NGẶT):
-      1. 🚨 LỖI LOGIC, EDGE CASES & TÍNH ĐÚNG ĐẮN:
-         - Phát hiện triệt để các trường hợp biên: null, undefined, NaN, mảng/chuỗi rỗng, divide-by-zero, off-by-one errors.
-         - Xử lý bất đồng bộ: Race conditions, unhandled promise rejections, thiếu await, Promise.all không xử lý lỗi từng phần.
-         - Quản lý tài nguyên & Memory Leaks: Không đóng stream, database connection, file handler, unremoved event listeners/timers.
-         - Nuốt lỗi (Swallow errors): Bắt ngoại lệ catch mà không log/throw hoặc log sơ sài làm mất stack trace.
+      const lines = diff.diff.split("\n");
+      const formattedLines: string[] = [];
+      let currentNewLine = 0;
 
-      2. 🔒 BẢO MẬT & PHÒNG THỦ (DEFENSIVE PROGRAMMING):
-         - Lỗ hổng bảo mật: SQL Injection, NoSQL Injection, XSS, SSRF, IDOR, Path Traversal, ReDoS, v.v.
-         - Hardcoded Secrets: API Keys, token, mật khẩu, IP nội bộ, endpoint nhạy cảm bị hardcode vào code.
-         - Input Validation: Thiếu kiểm tra và làm sạch dữ liệu đầu vào (sanitization) ở ranh giới hệ thống (API inputs, payload, query params).
+      for (const line of lines) {
+        // Hunk header: @@ -old_start,old_count +new_start,new_count @@
+        const hunkMatch = line.match(/^@@\s+-\d+(?:,\d+)?\s+\+(\d+)(?:,\d+)?\s+@@/);
+        if (hunkMatch) {
+          currentNewLine = parseInt(hunkMatch[1], 10);
+          formattedLines.push(`\n--- Hunk Context (Starts at line ${currentNewLine}) ---`);
+          continue;
+        }
 
-      3. ⚡ HIỆU SUẤT & KHẢ NĂNG MỞ RỘNG (PERFORMANCE & SCALABILITY):
-         - N+1 query problem, truy vấn database trong vòng lặp.
-         - Độ phức tạp thuật toán kém (O(n^2), O(2^n)) có thể tối ưu bằng Map/Set hoặc thuật toán hiệu quả hơn.
-         - Block event loop: Đồng bộ hóa I/O, regex phức tạp chạy trên chuỗi lớn, xử lý CPU-intensive trên main thread.
-         - Cấp phát bộ nhớ lãng phí, copy dữ liệu lớn không cần thiết.
-
-      4. 🏛️ KIẾN TRÚC & NGUYÊN LÝ LẬP TRÌNH (SOLID, DRY, CLEAN CODE):
-         - Vi phạm SOLID (đặc biệt Single Responsibility Principle - hàm/class làm quá nhiều việc).
-         - Code duplication (vi phạm DRY), code smells, god object, spaghetti code.
-         - Độ phức tạp nhận thức (Cognitive Complexity) quá cao, nested if/else quá sâu, code khó đọc và khó bảo trì.
-         - Lạm dụng kiểu dữ liệu lỏng lẻo (như 'any' trong TypeScript thay vì type rõ ràng, type assertion ép kiểu mù quáng).
-
-      5. 🏷️ QUY ƯỚC ĐẶT TÊN & CODE STYLE:
-         - Tên biến, hàm, class, constant không rõ nghĩa, sai ngữ nghĩa nghiệp vụ, viết tắt vô nghĩa.
-         - Sai convention (camelCase, PascalCase, UPPER_SNAKE_CASE). Magic numbers/strings không được khai báo constant.
-
-      YÊU CẦU ĐẦU RA (JSON FORMAT):
-      - Phản hồi CHỈ gồm một JSON Object hợp lệ (không kèm markdown ngoài khối JSON):
-      {
-        "summary": "Nhận xét tổng thể sắc sảo, thẳng thắn của Tech Lead về chất lượng MR (bằng tiếng Việt). Nêu rõ mức độ rủi ro, điểm yếu kiến trúc lớn nhất và kết luận xem MR này có đạt chuẩn hay cần refactor/sửa lỗi gấp.",
-        "comments": [
-          {
-            "path": "đường_dẫn_file.ts",
-            "line": 10,
-            "text": "Giải thích sắc bén, rõ ràng về lỗi kỹ thuật hoặc rủi ro (bằng tiếng Việt). Nêu rõ nguyên nhân tại sao cách viết hiện tại là nguy hiểm hoặc kém tối ưu.",
-            "suggestion": "Mã nguồn gợi ý chuẩn mực, tối ưu và sạch sẽ để thay thế (nếu có)."
+        if (line.startsWith("+")) {
+          // Dòng được thêm mới
+          formattedLines.push(`Line ${currentNewLine}: + ${line.slice(1)}`);
+          currentNewLine++;
+        } else if (line.startsWith("-")) {
+          // Dòng bị xoá (không tăng new line number)
+          formattedLines.push(`         - ${line.slice(1)}`);
+        } else {
+          // Context line (không đổi)
+          if (currentNewLine > 0) {
+            formattedLines.push(`Line ${currentNewLine}:   ${line.startsWith(" ") ? line.slice(1) : line}`);
+            currentNewLine++;
+          } else {
+            formattedLines.push(`         ${line}`);
           }
-        ]
+        }
       }
 
-      Nếu toàn bộ thay đổi đều đạt chuẩn xuất sắc, không có bất kỳ điểm nào cần cải thiện, hãy để "comments": [].
+      formattedFiles.push(`=== FILE: ${filePath} ===\n${formattedLines.join("\n")}`);
+    }
 
-      Nội dung Diff cần review:
-      ${JSON.stringify(diffs, null, 2)}
-    `;
+    return formattedFiles.join("\n\n");
+  }
+
+  async reviewCode(diffs: any[], mrContext?: MRContext): Promise<AIReviewResult> {
+    const formattedDiff = this.formatDiffWithLineNumbers(diffs);
+
+    if (!formattedDiff.trim()) {
+      return {
+        summary: "Không tìm thấy thay đổi code nào cần review.",
+        verdict: "APPROVE",
+        riskLevel: "LOW",
+        comments: [],
+      };
+    }
+
+    const contextSection = mrContext
+      ? `
+THÔNG TIN MERGE REQUEST:
+- Tiêu đề: ${mrContext.title}
+- Tác giả: ${mrContext.author}
+- Repository: ${mrContext.repoName}
+- Target Branch: ${mrContext.targetBranch}
+${mrContext.description ? `- Mô tả: ${mrContext.description}` : ""}
+`.trim()
+      : "";
+
+    const systemPrompt = `
+Bạn là một Principal / Staff Software Engineer & Security Auditor kỳ cựu.
+Nhiệm vụ của bạn là thực hiện Code Review chuyên sâu, chính xác, có tính xây dựng cho GitLab Merge Request.
+
+NGUYÊN TẮC REVIEW QUAN TRỌNG:
+1. Độ chính xác số dòng (Line Numbers): Chỉ chỉ định số dòng (line) dựa trên các dòng có tiền tố "Line <số>" trong diff mới.
+2. Giảm thiểu Bắt bẻ Vụn vặt (Zero False Positives):
+   - Không comment các lỗi về formatting/dấu chấm phẩy/khoảng trắng (đã có Linter/Prettier xử lý).
+   - Chỉ comment khi chắc chắn có lỗi hoặc rủi ro thực sự. Không suy đoán viển vông ngoài phạm vi diff.
+3. Đề xuất Code cụ thể (Suggestion): Mỗi comment chỉ ra lỗi NÊN KÈM THEO đoạn code sửa đổi chuẩn chỉnh, tối ưu.
+4. Ngôn ngữ phản hồi: Tiếng Việt súc tích, chuyên nghiệp, đi thẳng vào trọng tâm kỹ thuật.
+`.trim();
+
+    const prompt = `
+${contextSection}
+
+HÃY ĐÁNH GIÁ CÁC THAY ĐỔI THEO CÁC TIÊU CHÍ SAU:
+1. 🚨 BUG & LOGIC (Category: "BUG"):
+   - Null/Undefined pointer, NaN, Array Out of Bound, Off-by-one.
+   - Race conditions, Promise unhandled rejections, thiếu 'await', nuốt lỗi (empty catch blocks).
+   - Memory leaks, không release resources (stream, connection, timer).
+
+2. 🔒 BẢO MẬT (Category: "SECURITY"):
+   - SQL/NoSQL Injection, XSS, SSRF, Path Traversal, Insecure Deserialization.
+   - Hardcoded Credentials / Secrets / Token / Private Keys.
+   - Thiếu validation/sanitization dữ liệu đầu vào.
+
+3. ⚡ HIỆU NĂNG (Category: "PERFORMANCE"):
+   - N+1 queries, truy vấn DB trong loop, độ phức tạp O(n^2)+ không cần thiết.
+   - Blocking Node.js event loop (synchronous I/O nặng).
+
+4. 🏛️ KIẾN TRÚC & CLEAN CODE (Category: "CLEAN_CODE"):
+   - Vi phạm SOLID / DRY nghiêm trọng, lạm dụng 'any' trong TypeScript.
+   - Hàm quá dài, lồng nhau quá sâu (Cyclomatic Complexity cao).
+
+YÊU CẦU ĐỊNH DẠNG JSON TRẢ VỀ:
+{
+  "summary": "Tóm tắt súc tích (2-3 câu) về chất lượng tổng quan của MR, rủi ro chính và kết luận.",
+  "verdict": "APPROVE" | "REQUEST_CHANGES" | "COMMENT",
+  "riskLevel": "LOW" | "MEDIUM" | "HIGH",
+  "comments": [
+    {
+      "path": "đường_dẫn_file",
+      "line": 42,
+      "severity": "CRITICAL" | "WARNING" | "SUGGESTION",
+      "category": "SECURITY" | "BUG" | "PERFORMANCE" | "CLEAN_CODE",
+      "text": "Mô tả ngắn gọn nguyên nhân và rủi ro.",
+      "suggestion": "Đoạn code sửa đổi cụ thể để thay thế dòng/đoạn code bị lỗi"
+    }
+  ]
+}
+
+Nếu code tốt và không có vấn đề gì cần sửa, hãy trả về comments là mảng rỗng [] và verdict là "APPROVE", riskLevel là "LOW".
+
+DIFF CẦN REVIEW:
+${formattedDiff}
+`;
 
     try {
       const response = await this.client.chat.completions.create({
@@ -100,15 +186,24 @@ export class AIClient {
           },
           { role: "user", content: prompt },
         ],
-        response_format: { type: "json_object" }, // GLM-4 hỗ trợ ép kiểu JSON
+        response_format: { type: "json_object" },
       });
 
       const text = response.choices[0]?.message?.content || "{}";
-      return JSON.parse(text) as AIReviewResult;
+      const result = JSON.parse(text) as AIReviewResult;
+
+      return {
+        summary: result.summary || "Đã hoàn thành review code.",
+        verdict: result.verdict || (result.comments && result.comments.length > 0 ? "COMMENT" : "APPROVE"),
+        riskLevel: result.riskLevel || (result.comments && result.comments.length > 0 ? "MEDIUM" : "LOW"),
+        comments: Array.isArray(result.comments) ? result.comments : [],
+      };
     } catch (error) {
       console.error("Error with GLM review:", error);
       return {
-        summary: "I encountered an error while reviewing the code with GLM.",
+        summary: "Đã xảy ra lỗi trong quá trình phân tích code bằng AI.",
+        verdict: "COMMENT",
+        riskLevel: "HIGH",
         comments: [],
       };
     }
