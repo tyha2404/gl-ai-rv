@@ -36,9 +36,6 @@ describe('GoogleChatNotifier', () => {
       author: 'Tester',
       url: 'http://example.com',
       summary: 'Test summary',
-      repoName: 'test-group/test-repo',
-      mrId: 1,
-      targetBranch: 'main',
       comments: []
     });
     
@@ -67,9 +64,6 @@ describe('GoogleChatNotifier', () => {
       author: 'John Doe',
       url: 'http://gitlab.com/mr/1',
       summary: 'Fixed some bugs',
-      repoName: 'test-group/test-repo',
-      mrId: 1,
-      targetBranch: 'main',
       comments: [
         { path: 'file.ts', line: 10, text: 'Typo here' }
       ]
@@ -84,12 +78,10 @@ describe('GoogleChatNotifier', () => {
     const body = JSON.parse(fetchOptions.body);
     assert.ok(body.cardsV2);
     assert.strictEqual(body.cardsV2[0].card.header.title, payload.title);
-    assert.strictEqual(body.cardsV2[0].card.sections[0].widgets[0].decoratedText.text, `<b>${payload.repoName}</b>`);
-    assert.strictEqual(body.cardsV2[0].card.sections[0].widgets[2].decoratedText.text, payload.author);
-    assert.strictEqual(body.cardsV2[0].card.sections[1].widgets[1].decoratedText.text, '<b>1</b> issues detected');
-    assert.strictEqual(body.cardsV2[0].card.sections[2].header, '🔍 Chi tiết các vấn đề');
-    assert.strictEqual(body.cardsV2[0].card.sections[2].widgets[0].decoratedText.text, '📍 <code>file.ts</code>\nLine: <b>10</b>');
-    assert.strictEqual(body.cardsV2[0].card.sections[2].widgets[1].textParagraph.text, 'Typo here');
+    assert.strictEqual(body.cardsV2[0].card.sections[0].widgets[0].decoratedText.text, payload.author);
+    assert.strictEqual(body.cardsV2[0].card.sections[0].widgets[1].decoratedText.text, '1');
+    assert.strictEqual(body.cardsV2[0].card.sections[2].header, 'Detailed Issues');
+    assert.strictEqual(body.cardsV2[0].card.sections[2].widgets[0].decoratedText.topLabel, 'file.ts (Line 10)');
   });
 
   it('should escape HTML characters and format markdown-like syntax', async () => {
@@ -107,9 +99,6 @@ describe('GoogleChatNotifier', () => {
       author: 'User <user@example.com>',
       url: 'http://gitlab.com/mr/1',
       summary: 'Found **2** issues in <file>.',
-      repoName: 'test-group/test-repo',
-      mrId: 1,
-      targetBranch: 'main',
       comments: [
         { path: 'test.ts', line: 5, text: 'Fix *this* part.' }
       ]
@@ -121,8 +110,8 @@ describe('GoogleChatNotifier', () => {
     const card = body.cardsV2[0].card;
     
     assert.strictEqual(card.header.title, 'Review: &lt;script&gt;alert(1)&lt;/script&gt;');
-    assert.strictEqual(card.sections[0].widgets[2].decoratedText.text, 'User &lt;user@example.com&gt;');
+    assert.strictEqual(card.sections[0].widgets[0].decoratedText.text, 'User &lt;user@example.com&gt;');
     assert.strictEqual(card.sections[1].widgets[0].textParagraph.text, 'Found <b>2</b> issues in &lt;file&gt;.');
-    assert.strictEqual(card.sections[2].widgets[1].textParagraph.text, 'Fix <i>this</i> part.');
+    assert.strictEqual(card.sections[2].widgets[0].decoratedText.text, 'Fix <i>this</i> part.');
   });
 });
