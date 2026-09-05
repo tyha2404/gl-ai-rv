@@ -45,7 +45,7 @@ export class AIClient {
       apiKey: (apiKey || "").trim(),
       baseURL: "https://bigmodel.cn/api/paas/v4/", // Endpoint của Zhipu AI
     });
-    this.model = "glm-4.7-flash"; // Hoặc model cụ thể bạn muốn
+    this.model = process.env.GLM_MODEL || "glm-4-flash"; // Hoặc model tùy chỉnh qua env
   }
 
   /**
@@ -95,6 +95,22 @@ export class AIClient {
     return formattedFiles.join("\n\n");
   }
 
+  private cleanJsonResponse(content: string): string {
+    let clean = content.trim();
+    if (clean.startsWith("```json")) {
+      clean = clean.replace(/^```json\s*/, "").replace(/\s*```$/, "");
+    } else if (clean.startsWith("```")) {
+      clean = clean.replace(/^```\s*/, "").replace(/\s*```$/, "");
+    }
+    // Tìm đoạn JSON trong text nếu vẫn còn text bao quanh
+    const firstBrace = clean.indexOf("{");
+    const lastBrace = clean.lastIndexOf("}");
+    if (firstBrace !== -1 && lastBrace !== -1 && lastBrace > firstBrace) {
+      clean = clean.substring(firstBrace, lastBrace + 1);
+    }
+    return clean;
+  }
+
   async reviewCode(diffs: any[], mrContext?: MRContext): Promise<AIReviewResult> {
     const formattedDiff = this.formatDiffWithLineNumbers(diffs);
 
@@ -119,16 +135,23 @@ ${mrContext.description ? `- Mô tả: ${mrContext.description}` : ""}
       : "";
 
     const systemPrompt = `
-Bạn là một Principal / Staff Software Engineer & Security Auditor kỳ cựu.
+Bạn là một Principal Software Engineer & Lead Security Auditor kỳ cựu.
 Nhiệm vụ của bạn là thực hiện Code Review chuyên sâu, chính xác, có tính xây dựng cho GitLab Merge Request.
 
 NGUYÊN TẮC REVIEW QUAN TRỌNG:
-1. Độ chính xác số dòng (Line Numbers): Chỉ chỉ định số dòng (line) dựa trên các dòng có tiền tố "Line <số>" trong diff mới.
-2. Giảm thiểu Bắt bẻ Vụn vặt (Zero False Positives):
-   - Không comment các lỗi về formatting/dấu chấm phẩy/khoảng trắng (đã có Linter/Prettier xử lý).
-   - Chỉ comment khi chắc chắn có lỗi hoặc rủi ro thực sự. Không suy đoán viển vông ngoài phạm vi diff.
-3. Đề xuất Code cụ thể (Suggestion): Mỗi comment chỉ ra lỗi NÊN KÈM THEO đoạn code sửa đổi chuẩn chỉnh, tối ưu.
-4. Ngôn ngữ phản hồi: Tiếng Việt súc tích, chuyên nghiệp, đi thẳng vào trọng tâm kỹ thuật.
+1. Độ chính xác số dòng (Line Numbers):
+   - Chỉ chỉ định số dòng (line) dựa trên các dòng có tiền tố "Line <số>" trong diff mới của file tương ứng.
+   - Luôn gán đúng "path" (đường dẫn file chính xác như được chỉ định trong header === FILE: <path> ===).
+2. Chất lượng Review (Zero False Positives):
+   - Không comment các lỗi về formatting/dấu chấm phẩy/khoảng trắng (linter/prettier xử lý).
+   - Chỉ comment khi chắc chắn có lỗi logic, bảo mật, hiệu năng hoặc vi phạm best practices nghiêm trọng.
+   - Tránh suy đoán viển vông ngoài phạm vi diff.
+3. Đề xuất Code cụ thể (Suggestion):
+   - Mỗi comment chỉ ra vấn đề nên kèm theo đoạn code sửa đổi (suggestion) chuẩn chỉnh, ngắn gọn, có thể áp dụng ngay.
+4. Ngôn ngữ phản hồi:
+   - Sử dụng Tiếng Việt súc tích, chuyên nghiệp, đi thẳng vào trọng tâm kỹ thuật.
+5. Định dạng đầu ra:
+   - BẮT BUỘC chỉ trả về duy nhất một chuỗi JSON hợp lệ theo đúng cấu trúc schema được yêu cầu, không kèm bất kỳ văn bản nào ngoài JSON.
 `.trim();
 
     const prompt = `
@@ -138,7 +161,7 @@ HÃY ĐÁNH GIÁ CÁC THAY ĐỔI THEO CÁC TIÊU CHÍ SAU:
 1. 🚨 BUG & LOGIC (Category: "BUG"):
    - Null/Undefined pointer, NaN, Array Out of Bound, Off-by-one.
    - Race conditions, Promise unhandled rejections, thiếu 'await', nuốt lỗi (empty catch blocks).
-   - Memory leaks, không release resources (stream, connection, timer).
+   - Memory leaks, không release resources (stream, DB connection, timer).
 
 2. 🔒 BẢO MẬT (Category: "SECURITY"):
    - SQL/NoSQL Injection, XSS, SSRF, Path Traversal, Insecure Deserialization.
@@ -151,11 +174,11 @@ HÃY ĐÁNH GIÁ CÁC THAY ĐỔI THEO CÁC TIÊU CHÍ SAU:
 
 4. 🏛️ KIẾN TRÚC & CLEAN CODE (Category: "CLEAN_CODE"):
    - Vi phạm SOLID / DRY nghiêm trọng, lạm dụng 'any' trong TypeScript.
-   - Hàm quá dài, lồng nhau quá sâu (Cyclomatic Complexity cao).
+   - Code trùng lặp, logic quá phức tạp hoặc khó bảo trì.
 
 YÊU CẦU ĐỊNH DẠNG JSON TRẢ VỀ:
 {
-  "summary": "Tóm tắt súc tích (2-3 câu) về chất lượng tổng quan của MR, rủi ro chính và kết luận.",
+  "summary": "Tóm tắt súc tích (2-3 câu) bằng Tiếng Việt về chất lượng tổng quan của MR, rủi ro chính và kết luận.",
   "verdict": "APPROVE" | "REQUEST_CHANGES" | "COMMENT",
   "riskLevel": "LOW" | "MEDIUM" | "HIGH",
   "comments": [
@@ -170,7 +193,10 @@ YÊU CẦU ĐỊNH DẠNG JSON TRẢ VỀ:
   ]
 }
 
-Nếu code tốt và không có vấn đề gì cần sửa, hãy trả về comments là mảng rỗng [] và verdict là "APPROVE", riskLevel là "LOW".
+Quy ước Verdict & RiskLevel:
+- Nếu có lỗi CRITICAL hoặc rủi ro bảo mật nghiêm trọng: verdict = "REQUEST_CHANGES", riskLevel = "HIGH".
+- Nếu có cảnh báo WARNING hoặc SUGGESTION cần lưu ý: verdict = "COMMENT", riskLevel = "MEDIUM".
+- Nếu code tốt, không có vấn đề gì: verdict = "APPROVE", riskLevel = "LOW", comments = [].
 
 DIFF CẦN REVIEW:
 ${formattedDiff}
@@ -182,15 +208,16 @@ ${formattedDiff}
         messages: [
           {
             role: "system",
-            content: "You are a helpful assistant that outputs JSON.",
+            content: systemPrompt,
           },
           { role: "user", content: prompt },
         ],
         response_format: { type: "json_object" },
       });
 
-      const text = response.choices[0]?.message?.content || "{}";
-      const result = JSON.parse(text) as AIReviewResult;
+      const rawText = response.choices[0]?.message?.content || "{}";
+      const cleanedText = this.cleanJsonResponse(rawText);
+      const result = JSON.parse(cleanedText) as AIReviewResult;
 
       return {
         summary: result.summary || "Đã hoàn thành review code.",
