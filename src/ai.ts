@@ -35,17 +35,26 @@ export class AIClient {
   private model: string;
 
   constructor() {
-    const apiKey = process.env.GLM_API_KEY;
+    const apiKey = process.env.GROQ_API_KEY || process.env.GLM_API_KEY;
     if (!apiKey) {
-      console.error("GLM_API_KEY is not defined in .env file");
+      console.error("GROQ_API_KEY (or GLM_API_KEY) is not defined in .env file");
     }
 
-    // GLM-4 (Zhipu AI) dùng chuẩn OpenAI
+    // Groq / OpenAI-compatible endpoint
+    const baseURL =
+      process.env.GROQ_BASE_URL ||
+      (process.env.GROQ_API_KEY
+        ? "https://api.groq.com/openai/v1"
+        : "https://bigmodel.cn/api/paas/v4/");
+
     this.client = new OpenAI({
       apiKey: (apiKey || "").trim(),
-      baseURL: "https://bigmodel.cn/api/paas/v4/", // Endpoint của Zhipu AI
+      baseURL,
     });
-    this.model = process.env.GLM_MODEL || "glm-4-flash"; // Hoặc model tùy chỉnh qua env
+    this.model =
+      process.env.GROQ_MODEL ||
+      process.env.GLM_MODEL ||
+      "llama-3.3-70b-versatile";
   }
 
   /**
@@ -226,7 +235,7 @@ ${formattedDiff}
         comments: Array.isArray(result.comments) ? result.comments : [],
       };
     } catch (error) {
-      console.error("Error with GLM review:", error);
+      console.error("Error with AI review:", error);
       return {
         summary: "Đã xảy ra lỗi trong quá trình phân tích code bằng AI.",
         verdict: "COMMENT",
