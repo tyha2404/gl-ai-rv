@@ -1,0 +1,48 @@
+name: Deploy GitLab AI Reviewer
+
+on:
+  push:
+    branches:
+      - master
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: self-hosted
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Load Persistent Environment Variables
+        shell: bash
+        run: |
+          if [ -f "$HOME/gl-ai-reviewer-secrets/.env" ]; then
+            echo "Loading .env from ~/gl-ai-reviewer-secrets/.env"
+            cp "$HOME/gl-ai-reviewer-secrets/.env" .env
+          elif [ -f "$HOME/app-secrets/.env.gitlab-ai-reviewer" ]; then
+            echo "Loading .env from ~/app-secrets/.env.gitlab-ai-reviewer"
+            cp "$HOME/app-secrets/.env.gitlab-ai-reviewer" .env
+          else
+            echo "::warning::File ~/gl-ai-reviewer-secrets/.env not found! Please create it on the server."
+          fi
+
+      - name: Check Environment Info
+        shell: bash
+        run: |
+          echo "=== Deploy Environment ==="
+          echo "User: $(whoami)"
+          echo "Node: $(node -v)"
+          echo "NPM: $(npm -v)"
+          echo "PM2: $(pm2 -v)"
+
+      - name: Install Dependencies
+        shell: bash
+        run: |
+          npm ci
+
+      - name: Deploy / Reload PM2
+        shell: bash
+        run: |
+          pm2 reload ecosystem.config.cjs --update-env || pm2 start ecosystem.config.cjs
+          pm2 save
