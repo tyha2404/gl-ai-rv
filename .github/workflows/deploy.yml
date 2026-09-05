@@ -9,13 +9,15 @@ on:
 jobs:
   deploy-reviewer:
     runs-on: self-hosted
+    defaults:
+      run:
+        shell: bash -l {0}
 
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
 
       - name: Load Persistent Environment Variables
-        shell: bash
         run: |
           if [ -f "$HOME/gl-ai-reviewer-secrets/.env" ]; then
             echo "Loading .env from ~/gl-ai-reviewer-secrets/.env"
@@ -25,20 +27,18 @@ jobs:
           fi
 
       - name: Check Environment
-        shell: bash
         run: |
           echo "=== Deploy Info ==="
           echo "User: $(whoami)"
           echo "Node: $(node -v)"
+          echo "NPM: $(npm -v)"
           echo "PM2: $(pm2 -v)"
 
       - name: Install Dependencies
-        shell: bash
         run: |
           npm ci
 
       - name: Deploy / Reload PM2
-        shell: bash
         run: |
           pm2 reload ecosystem.config.cjs --update-env || pm2 start ecosystem.config.cjs
           pm2 save
