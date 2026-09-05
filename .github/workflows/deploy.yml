@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
 
 jobs:
-  deploy:
+  deploy-reviewer:
     runs-on: self-hosted
 
     steps:
@@ -20,20 +20,16 @@ jobs:
           if [ -f "$HOME/gl-ai-reviewer-secrets/.env" ]; then
             echo "Loading .env from ~/gl-ai-reviewer-secrets/.env"
             cp "$HOME/gl-ai-reviewer-secrets/.env" .env
-          elif [ -f "$HOME/app-secrets/.env.gitlab-ai-reviewer" ]; then
-            echo "Loading .env from ~/app-secrets/.env.gitlab-ai-reviewer"
-            cp "$HOME/app-secrets/.env.gitlab-ai-reviewer" .env
           else
             echo "::warning::File ~/gl-ai-reviewer-secrets/.env not found! Please create it on the server."
           fi
 
-      - name: Check Environment Info
+      - name: Check Environment
         shell: bash
         run: |
-          echo "=== Deploy Environment ==="
+          echo "=== Deploy Info ==="
           echo "User: $(whoami)"
           echo "Node: $(node -v)"
-          echo "NPM: $(npm -v)"
           echo "PM2: $(pm2 -v)"
 
       - name: Install Dependencies
