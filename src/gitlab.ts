@@ -15,23 +15,19 @@ export class GitLabClient {
 
   async getMergeRequestDiff(projectId: string | number, mergeRequestIid: number) {
     try {
-      // Ưu tiên dùng allDiffs (GitLab API v4 mới nhất)
-      if (typeof this.api.MergeRequests.allDiffs === "function") {
-        const diffs = await this.api.MergeRequests.allDiffs(projectId, mergeRequestIid);
-        return diffs || [];
-      }
-      // Fallback nếu dùng GitLab phiên bản cũ
       const response = await this.api.MergeRequests.showChanges(projectId, mergeRequestIid);
-      return response.changes || [];
-    } catch (error: any) {
-      console.error(`Error fetching MR changes:`, error.message);
-      // Fallback thử lại phương thức còn lại nếu gặp lỗi
+      return response.changes || response || [];
+    } catch (err1: any) {
+      // Nếu showChanges lỗi, thử tiếp allDiffs
       try {
-        const response = await this.api.MergeRequests.showChanges(projectId, mergeRequestIid);
-        return response.changes || [];
-      } catch {
-        throw error;
+        if (typeof this.api.MergeRequests.allDiffs === "function") {
+          const diffs = await this.api.MergeRequests.allDiffs(projectId, mergeRequestIid);
+          return diffs || [];
+        }
+      } catch (err2: any) {
+        console.error(`Error fetching MR diffs for MR #${mergeRequestIid}:`, err1?.message || err2?.message);
       }
+      throw err1;
     }
   }
 
