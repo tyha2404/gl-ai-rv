@@ -3,6 +3,7 @@ import express from "express";
 import { AIClient } from "./ai";
 import { GitLabClient } from "./gitlab";
 import { GoogleChatNotifier } from "./notifier";
+import { filterDiffs } from "./utils/diff";
 
 dotenv.config();
 
@@ -14,32 +15,14 @@ const notifier = new GoogleChatNotifier();
 
 app.use(express.json());
 
-const IGNORED_FILES = [
-  "package-lock.json",
-  "yarn.lock",
-  "pnpm-lock.yaml",
-  ".env",
-  ".gitignore",
-  "dist/",
-  "node_modules/",
-];
-
-function filterDiffs(diffs: any[]) {
-  return diffs.filter((diff) => {
-    const path = diff.new_path || diff.old_path;
-    return !IGNORED_FILES.some((ignored) => path.includes(ignored));
-  });
-}
-
 app.get("/", (req, res) => {
-  res.send("GitLab AI Reviewer is running!");
+  res.send("GitLab Multi-Agent AI Reviewer is running!");
 });
 
 async function handleAIReview(
   projectId: number,
   iid: number,
   diffs: any[],
-  diffRefs: any,
   mrInfo: {
     title: string;
     author: string;
@@ -50,11 +33,16 @@ async function handleAIReview(
   },
 ) {
   try {
-    const filteredDiffs = filterDiffs(diffs);
-    if (filteredDiffs.length === 0) return;
+    const validDiffs = filterDiffs(diffs);
+    if (validDiffs.length === 0) {
+      console.log(`[AIReview] No reviewable diffs found for MR #${iid}.`);
+      return;
+    }
 
-    console.log(`Starting AI Review for MR #${iid}...`);
-    const reviewResult = await ai.reviewCode(filteredDiffs, {
+    console.log(
+      `[AIReview] Starting Multi-Role AI Review for MR #${iid} (${validDiffs.length} files)...`,
+    );
+    const reviewResult = await ai.reviewCode(validDiffs, {
       title: mrInfo.title,
       author: mrInfo.author,
       repoName: mrInfo.repoName,
@@ -63,11 +51,13 @@ async function handleAIReview(
     });
 
     console.log(
-      `AI Review completed for MR #${iid}. Verdict: ${reviewResult.verdict}, Risk: ${reviewResult.riskLevel}, Issues: ${reviewResult.comments.length}`,
+      `[AIReview] Completed for MR #${iid}. Verdict: ${reviewResult.verdict}, Risk: ${reviewResult.riskLevel}, Issues: ${reviewResult.comments.length}`,
     );
 
-    // Gửi báo cáo phân tích chi tiết về Google Chat
-    console.log(`Sending enriched notification to Google Chat for MR #${iid}`);
+    // Gửi báo cáo phân tích chi tiết về Google Chat (Cards V2)
+    console.log(
+      `[Notifier] Sending multi-agent review report to Google Chat for MR #${iid}`,
+    );
     await notifier.sendReviewNotification({
       title: mrInfo.title,
       author: mrInfo.author,
@@ -81,9 +71,9 @@ async function handleAIReview(
       comments: reviewResult.comments || [],
     });
 
-    console.log(`AI Review for MR #${iid} completed.`);
+    console.log(`[AIReview] Process finished successfully for MR #${iid}.`);
   } catch (error) {
-    console.error("Error in handleAIReview:", error);
+    console.error("[AIReview] Error in handleAIReview:", error);
   }
 }
 
@@ -93,15 +83,33 @@ app.post("/webhook", async (req, res) => {
 
   if (event === "Merge Request Hook") {
     const { object_attributes, project, user } = payload;
-    const { iid, action, state, title, description, source, target_branch } =
-      object_attributes;
+    const {
+      iid,
+      action,
+      state,
+      title,
+      description,
+      source,
+      target_branch,
+      work_in_progress,
+    } = object_attributes;
     const projectId = project.id;
     const repoName = project.name;
+
+    // Bỏ qua nếu là draft / WIP MR
+    if (
+      work_in_progress ||
+      title.startsWith("Draft:") ||
+      title.startsWith("WIP:")
+    ) {
+      console.log(`[Webhook] MR #${iid} is Draft/WIP. Skipping review.`);
+      res.status(200).send("Draft MR ignored");
+      return;
+    }
 
     // Trigger on open, reopen or code update
     if (state === "opened" || state === "reopened" || action === "update") {
       try {
-        const mr = await gitlab.getMergeRequest(projectId, iid);
         const diffs = await gitlab.getMergeRequestDiff(projectId, iid);
 
         res.status(200).send("Processing");
@@ -109,15 +117,17 @@ app.post("/webhook", async (req, res) => {
         const mrInfo = {
           title: title,
           author: user.name,
-          url: source.http_url,
+          url:
+            source?.http_url ||
+            `https://gitlab.com/${project.path_with_namespace}/-/merge_requests/${iid}`,
           repoName: repoName,
           targetBranch: target_branch,
           description: description || undefined,
         };
 
-        handleAIReview(projectId, iid, diffs, mr.diff_refs, mrInfo);
+        handleAIReview(projectId, iid, diffs, mrInfo);
       } catch (error) {
-        console.error("Webhook processing error:", error);
+        console.error("[Webhook] Processing error:", error);
         res.status(500).send("Error");
       }
     } else {

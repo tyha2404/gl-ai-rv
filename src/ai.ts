@@ -1,5 +1,12 @@
 import dotenv from "dotenv";
 import OpenAI from "openai";
+import { loadProjectRules } from "./config/rules";
+import {
+  LEAD_CONSOLIDATOR_PROMPT,
+  REVIEW_ROLES,
+  RoleConfig,
+} from "./roles/prompts";
+import { chunkDiffs, DiffBatch, GitLabDiffItem } from "./utils/diff";
 
 dotenv.config();
 
@@ -17,8 +24,8 @@ export interface AIReviewComment {
 
 export interface AIReviewResult {
   summary: string;
-  verdict?: ("APPROVE" | "REQUEST_CHANGES" | "COMMENT") | undefined;
-  riskLevel?: ("LOW" | "MEDIUM" | "HIGH") | undefined;
+  verdict: "APPROVE" | "REQUEST_CHANGES" | "COMMENT";
+  riskLevel: "LOW" | "MEDIUM" | "HIGH";
   comments: AIReviewComment[];
 }
 
@@ -28,13 +35,27 @@ export interface MRContext {
   repoName: string;
   targetBranch: string;
   description?: string | undefined;
+  customRules?: string | undefined;
+}
+
+export interface RoleReviewOutput {
+  role: string;
+  category: Category;
+  comments: AIReviewComment[];
+  analysis?: string;
 }
 
 export class AIClient {
   private client: OpenAI;
   private model: string;
 
-  constructor() {
+  constructor(customClient?: OpenAI, customModel?: string) {
+    if (customClient) {
+      this.client = customClient;
+      this.model = customModel || "auto";
+      return;
+    }
+
     const apiKey =
       process.env.NINE_ROUTER_API_KEY ||
       process.env.GROQ_API_KEY ||
@@ -47,14 +68,15 @@ export class AIClient {
       (process.env.GROQ_API_KEY
         ? "https://api.groq.com/openai/v1"
         : process.env.GLM_API_KEY
-        ? "https://bigmodel.cn/api/paas/v4/"
-        : "http://localhost:20128/v1/");
+          ? "https://bigmodel.cn/api/paas/v4/"
+          : "http://localhost:20128/v1/");
 
     this.client = new OpenAI({
       apiKey: apiKey.trim(),
       baseURL: baseURL.trim(),
     });
     this.model =
+      customModel ||
       process.env.NINE_ROUTER_MODEL ||
       process.env.GROQ_MODEL ||
       process.env.GLM_MODEL ||
@@ -62,60 +84,15 @@ export class AIClient {
   }
 
   /**
-   * Parse git unified diff thành định dạng có số dòng chính xác cho file mới (new_path)
+   * Làm sạch và trích xuất JSON từ chuỗi phản hồi của LLM
    */
-  private formatDiffWithLineNumbers(diffs: any[]): string {
-    const formattedFiles: string[] = [];
-
-    for (const diff of diffs) {
-      const filePath = diff.new_path || diff.old_path;
-      if (!diff.diff) continue;
-
-      const lines = diff.diff.split("\n");
-      const formattedLines: string[] = [];
-      let currentNewLine = 0;
-
-      for (const line of lines) {
-        // Hunk header: @@ -old_start,old_count +new_start,new_count @@
-        const hunkMatch = line.match(/^@@\s+-\d+(?:,\d+)?\s+\+(\d+)(?:,\d+)?\s+@@/);
-        if (hunkMatch) {
-          currentNewLine = parseInt(hunkMatch[1], 10);
-          formattedLines.push(`\n--- Hunk Context (Starts at line ${currentNewLine}) ---`);
-          continue;
-        }
-
-        if (line.startsWith("+")) {
-          // Dòng được thêm mới
-          formattedLines.push(`Line ${currentNewLine}: + ${line.slice(1)}`);
-          currentNewLine++;
-        } else if (line.startsWith("-")) {
-          // Dòng bị xoá (không tăng new line number)
-          formattedLines.push(`         - ${line.slice(1)}`);
-        } else {
-          // Context line (không đổi)
-          if (currentNewLine > 0) {
-            formattedLines.push(`Line ${currentNewLine}:   ${line.startsWith(" ") ? line.slice(1) : line}`);
-            currentNewLine++;
-          } else {
-            formattedLines.push(`         ${line}`);
-          }
-        }
-      }
-
-      formattedFiles.push(`=== FILE: ${filePath} ===\n${formattedLines.join("\n")}`);
-    }
-
-    return formattedFiles.join("\n\n");
-  }
-
-  private cleanJsonResponse(content: string): string {
+  public cleanJsonResponse(content: string): string {
     let clean = content.trim();
     if (clean.startsWith("```json")) {
       clean = clean.replace(/^```json\s*/, "").replace(/\s*```$/, "");
     } else if (clean.startsWith("```")) {
       clean = clean.replace(/^```\s*/, "").replace(/\s*```$/, "");
     }
-    // Tìm đoạn JSON trong text nếu vẫn còn text bao quanh
     const firstBrace = clean.indexOf("{");
     const lastBrace = clean.lastIndexOf("}");
     if (firstBrace !== -1 && lastBrace !== -1 && lastBrace > firstBrace) {
@@ -124,10 +101,260 @@ export class AIClient {
     return clean;
   }
 
-  async reviewCode(diffs: any[], mrContext?: MRContext): Promise<AIReviewResult> {
-    const formattedDiff = this.formatDiffWithLineNumbers(diffs);
+  /**
+   * Thực thi một Agent / Role chuyên môn cho 1 batch diff
+   */
+  private async runRoleReview(
+    role: RoleConfig,
+    batch: DiffBatch,
+    contextSection: string,
+    customRulesSection: string,
+  ): Promise<RoleReviewOutput> {
+    const prompt = `
+${contextSection}
+${customRulesSection}
 
-    if (!formattedDiff.trim()) {
+[DIFF CẦN REVIEW - BATCH ${batch.batchIndex}/${batch.totalBatches}]:
+${batch.formattedDiffText}
+
+HƯỚNG DẪN REVIEW:
+- Đóng đúng vai trò: ${role.name}.
+- Chỉ tìm các vấn đề thuộc nhóm Category: "${role.category}".
+- Chỉ comment khi chắc chắn có vấn đề xác thực (Zero False Positives).
+- Nếu không có vấn đề gì thuộc chuyên môn của bạn, hãy trả về danh sách rỗng: "comments": [].
+
+BẮT BUỘC TRẢ VỀ JSON THEO SCHEMA:
+{
+  "analysis": "Đánh giá nhanh khía cạnh ${role.category}",
+  "comments": [
+    {
+      "path": "đường_dẫn_file",
+      "line": 42,
+      "severity": "CRITICAL" | "WARNING" | "SUGGESTION",
+      "category": "${role.category}",
+      "text": "Mô tả vấn đề ngắn gọn, giải thích rủi ro",
+      "suggestion": "Đoạn code sửa đổi cụ thể nếu có"
+    }
+  ]
+}
+`.trim();
+
+    try {
+      const response = await this.client.chat.completions.create({
+        model: this.model,
+        messages: [
+          { role: "system", content: role.systemPrompt },
+          { role: "user", content: prompt },
+        ],
+        temperature: 0.1,
+        response_format: { type: "json_object" },
+      });
+
+      const raw = response.choices[0]?.message?.content || "{}";
+      const clean = this.cleanJsonResponse(raw);
+      const parsed = JSON.parse(clean);
+
+      const comments: AIReviewComment[] = Array.isArray(parsed.comments)
+        ? parsed.comments.map((c: any) => ({
+            path: String(c.path || ""),
+            line: Number(c.line) || 1,
+            severity: (["CRITICAL", "WARNING", "SUGGESTION"].includes(
+              c.severity,
+            )
+              ? c.severity
+              : "WARNING") as Severity,
+            category: role.category,
+            text: String(c.text || ""),
+            suggestion: c.suggestion ? String(c.suggestion) : undefined,
+          }))
+        : [];
+
+      return {
+        role: role.name,
+        category: role.category,
+        comments,
+        analysis: parsed.analysis || "",
+      };
+    } catch (err) {
+      console.warn(
+        `[MultiAgentReview] Role ${role.name} error on batch ${batch.batchIndex}:`,
+        err,
+      );
+      return {
+        role: role.name,
+        category: role.category,
+        comments: [],
+        analysis: "Role review error",
+      };
+    }
+  }
+
+  /**
+   * Lead Reviewer tổng hợp các ý kiến từ các chuyên gia, lọc bỏ trùng lặp và thẩm định chất lượng
+   */
+  private async consolidateReviews(
+    allRoleOutputs: RoleReviewOutput[],
+    batches: DiffBatch[],
+    contextSection: string,
+    customRulesSection: string,
+  ): Promise<AIReviewResult> {
+    const allRawComments: AIReviewComment[] = [];
+    for (const out of allRoleOutputs) {
+      allRawComments.push(...out.comments);
+    }
+
+    // Nếu không có bất kỳ chuyên gia nào phát hiện lỗi
+    if (allRawComments.length === 0) {
+      return {
+        summary:
+          "Đội ngũ chuyên gia (Security, Performance, Clean Code, Bug Hunter) đã kiểm tra toàn diện và không phát hiện vấn đề nào cần lưu ý. Code đạt chất lượng tốt.",
+        verdict: "APPROVE",
+        riskLevel: "LOW",
+        comments: [],
+      };
+    }
+
+    const consolidatorPrompt = `
+${contextSection}
+${customRulesSection}
+
+KẾT QUẢ THÔ TỪ CÁC CHUYÊN GIA REVIEW:
+${JSON.stringify(allRoleOutputs, null, 2)}
+
+DIFF CỦA CÁC FILE ĐƯỢC REVIEW:
+${batches.map((b) => b.formattedDiffText).join("\n\n")}
+
+NHIỆM VỤ CỦA LEAD REVIEWER:
+1. Thẩm định chéo (Critique): Kiểm tra lại xem các comment từ chuyên gia có thật sự chính xác, có đúng dòng không, có bị false positive không.
+2. Khử trùng lặp (Deduplicate): Nếu cùng 1 file và line bị nhiều chuyên gia nhắc đến, gộp lại thành 1 comment hoàn chỉnh với mức severity cao nhất.
+3. Đánh giá tổng quan: Viết summary (2-3 câu tiếng Việt súc tích), chọn verdict và riskLevel phù hợp.
+
+BẮT BUỘC TRẢ VỀ ĐÚNG SCHEMA JSON:
+{
+  "summary": "Tóm tắt đánh giá chất lượng tổng quan của MR",
+  "verdict": "APPROVE" | "REQUEST_CHANGES" | "COMMENT",
+  "riskLevel": "LOW" | "MEDIUM" | "HIGH",
+  "comments": [
+    {
+      "path": "đường_dẫn_file",
+      "line": 42,
+      "severity": "CRITICAL" | "WARNING" | "SUGGESTION",
+      "category": "SECURITY" | "PERFORMANCE" | "CLEAN_CODE" | "BUG",
+      "text": "Mô tả nguyên nhân & rủi ro rõ ràng",
+      "suggestion": "Đoạn code sửa đổi cụ thể"
+    }
+  ]
+}
+`.trim();
+
+    try {
+      const response = await this.client.chat.completions.create({
+        model: this.model,
+        messages: [
+          { role: "system", content: LEAD_CONSOLIDATOR_PROMPT },
+          { role: "user", content: consolidatorPrompt },
+        ],
+        temperature: 0.1,
+        response_format: { type: "json_object" },
+      });
+
+      const raw = response.choices[0]?.message?.content || "{}";
+      const clean = this.cleanJsonResponse(raw);
+      const parsed = JSON.parse(clean);
+
+      const finalComments: AIReviewComment[] = Array.isArray(parsed.comments)
+        ? parsed.comments.map((c: any) => ({
+            path: String(c.path || ""),
+            line: Number(c.line) || 1,
+            severity: (["CRITICAL", "WARNING", "SUGGESTION"].includes(
+              c.severity,
+            )
+              ? c.severity
+              : "WARNING") as Severity,
+            category: ([
+              "SECURITY",
+              "PERFORMANCE",
+              "CLEAN_CODE",
+              "BUG",
+            ].includes(c.category)
+              ? c.category
+              : "BUG") as Category,
+            text: String(c.text || ""),
+            suggestion: c.suggestion ? String(c.suggestion) : undefined,
+          }))
+        : allRawComments;
+
+      let verdict: "APPROVE" | "REQUEST_CHANGES" | "COMMENT" = "APPROVE";
+      if (finalComments.some((c) => c.severity === "CRITICAL")) {
+        verdict = "REQUEST_CHANGES";
+      } else if (finalComments.length > 0) {
+        verdict = "COMMENT";
+      }
+
+      let riskLevel: "LOW" | "MEDIUM" | "HIGH" = "LOW";
+      if (verdict === "REQUEST_CHANGES") {
+        riskLevel = "HIGH";
+      } else if (finalComments.length > 0) {
+        riskLevel = "MEDIUM";
+      }
+
+      return {
+        summary:
+          parsed.summary ||
+          "Đã hoàn thành phân tích đa chuyên gia cho Merge Request.",
+        verdict: parsed.verdict || verdict,
+        riskLevel: parsed.riskLevel || riskLevel,
+        comments: finalComments,
+      };
+    } catch (err) {
+      console.warn(
+        "[MultiAgentReview] Lead Consolidator error, using fallback deduplication:",
+        err,
+      );
+
+      // Local programmatic fallback deduplication
+      const deduplicatedMap = new Map<string, AIReviewComment>();
+      for (const comment of allRawComments) {
+        const key = `${comment.path}:${comment.line}`;
+        const existing = deduplicatedMap.get(key);
+        if (
+          !existing ||
+          (comment.severity === "CRITICAL" && existing.severity !== "CRITICAL")
+        ) {
+          deduplicatedMap.set(key, comment);
+        }
+      }
+
+      const finalComments = Array.from(deduplicatedMap.values());
+      const hasCritical = finalComments.some((c) => c.severity === "CRITICAL");
+
+      return {
+        summary: "Đã hoàn thành đánh giá chuyên sâu qua các chuyên gia.",
+        verdict: hasCritical
+          ? "REQUEST_CHANGES"
+          : finalComments.length > 0
+            ? "COMMENT"
+            : "APPROVE",
+        riskLevel: hasCritical
+          ? "HIGH"
+          : finalComments.length > 0
+            ? "MEDIUM"
+            : "LOW",
+        comments: finalComments,
+      };
+    }
+  }
+
+  /**
+   * Main Entrypoint: Multi-Agent Code Review
+   */
+  async reviewCode(
+    diffs: GitLabDiffItem[],
+    mrContext?: MRContext,
+  ): Promise<AIReviewResult> {
+    const batches = chunkDiffs(diffs);
+
+    if (batches.length === 0) {
       return {
         summary: "Không tìm thấy thay đổi code nào cần review.",
         verdict: "APPROVE",
@@ -147,105 +374,45 @@ ${mrContext.description ? `- Mô tả: ${mrContext.description}` : ""}
 `.trim()
       : "";
 
-    const systemPrompt = `
-Bạn là một Principal Software Engineer & Lead Security Auditor kỳ cựu.
-Nhiệm vụ của bạn là thực hiện Code Review chuyên sâu, chính xác, có tính xây dựng cho GitLab Merge Request.
+    const customRules = mrContext?.customRules || loadProjectRules();
+    const customRulesSection = customRules
+      ? `\nQUY TẮC BẮT BUỘC CỦA DỰ ÁN (PROJECT RULES):\n${customRules}\n`
+      : "";
 
-NGUYÊN TẮC REVIEW QUAN TRỌNG:
-1. Độ chính xác số dòng (Line Numbers):
-   - Chỉ chỉ định số dòng (line) dựa trên các dòng có tiền tố "Line <số>" trong diff mới của file tương ứng.
-   - Luôn gán đúng "path" (đường dẫn file chính xác như được chỉ định trong header === FILE: <path> ===).
-2. Chất lượng Review (Zero False Positives):
-   - Không comment các lỗi về formatting/dấu chấm phẩy/khoảng trắng (linter/prettier xử lý).
-   - Chỉ comment khi chắc chắn có lỗi logic, bảo mật, hiệu năng hoặc vi phạm best practices nghiêm trọng.
-   - Tránh suy đoán viển vông ngoài phạm vi diff.
-3. Đề xuất Code cụ thể (Suggestion):
-   - Mỗi comment chỉ ra vấn đề nên kèm theo đoạn code sửa đổi (suggestion) chuẩn chỉnh, ngắn gọn, có thể áp dụng ngay.
-4. Ngôn ngữ phản hồi:
-   - Sử dụng Tiếng Việt súc tích, chuyên nghiệp, đi thẳng vào trọng tâm kỹ thuật.
-5. Định dạng đầu ra:
-   - BẮT BUỘC chỉ trả về duy nhất một chuỗi JSON hợp lệ theo đúng cấu trúc schema được yêu cầu, không kèm bất kỳ văn bản nào ngoài JSON.
-`.trim();
+    console.log(
+      `[MultiAgentReview] Reviewing ${batches.length} diff batches across ${REVIEW_ROLES.length} specialist roles...`,
+    );
 
-    const prompt = `
-${contextSection}
+    const allRoleOutputs: RoleReviewOutput[] = [];
 
-HÃY ĐÁNH GIÁ CÁC THAY ĐỔI THEO CÁC TIÊU CHÍ SAU:
-1. 🚨 BUG & LOGIC (Category: "BUG"):
-   - Null/Undefined pointer, NaN, Array Out of Bound, Off-by-one.
-   - Race conditions, Promise unhandled rejections, thiếu 'await', nuốt lỗi (empty catch blocks).
-   - Memory leaks, không release resources (stream, DB connection, timer).
+    // Chạy review song song cho từng batch
+    for (const batch of batches) {
+      console.log(
+        `[MultiAgentReview] Processing Batch ${batch.batchIndex}/${batch.totalBatches} (${batch.files.length} files)...`,
+      );
 
-2. 🔒 BẢO MẬT (Category: "SECURITY"):
-   - SQL/NoSQL Injection, XSS, SSRF, Path Traversal, Insecure Deserialization.
-   - Hardcoded Credentials / Secrets / Token / Private Keys.
-   - Thiếu validation/sanitization dữ liệu đầu vào.
+      const rolePromises = REVIEW_ROLES.map((role) =>
+        this.runRoleReview(role, batch, contextSection, customRulesSection),
+      );
 
-3. ⚡ HIỆU NĂNG (Category: "PERFORMANCE"):
-   - N+1 queries, truy vấn DB trong loop, độ phức tạp O(n^2)+ không cần thiết.
-   - Blocking Node.js event loop (synchronous I/O nặng).
-
-4. 🏛️ KIẾN TRÚC & CLEAN CODE (Category: "CLEAN_CODE"):
-   - Vi phạm SOLID / DRY nghiêm trọng, lạm dụng 'any' trong TypeScript.
-   - Code trùng lặp, logic quá phức tạp hoặc khó bảo trì.
-
-YÊU CẦU ĐỊNH DẠNG JSON TRẢ VỀ:
-{
-  "summary": "Tóm tắt súc tích (2-3 câu) bằng Tiếng Việt về chất lượng tổng quan của MR, rủi ro chính và kết luận.",
-  "verdict": "APPROVE" | "REQUEST_CHANGES" | "COMMENT",
-  "riskLevel": "LOW" | "MEDIUM" | "HIGH",
-  "comments": [
-    {
-      "path": "đường_dẫn_file",
-      "line": 42,
-      "severity": "CRITICAL" | "WARNING" | "SUGGESTION",
-      "category": "SECURITY" | "BUG" | "PERFORMANCE" | "CLEAN_CODE",
-      "text": "Mô tả ngắn gọn nguyên nhân và rủi ro.",
-      "suggestion": "Đoạn code sửa đổi cụ thể để thay thế dòng/đoạn code bị lỗi"
+      const results = await Promise.allSettled(rolePromises);
+      for (const res of results) {
+        if (res.status === "fulfilled") {
+          allRoleOutputs.push(res.value);
+        }
+      }
     }
-  ]
-}
 
-Quy ước Verdict & RiskLevel:
-- Nếu có lỗi CRITICAL hoặc rủi ro bảo mật nghiêm trọng: verdict = "REQUEST_CHANGES", riskLevel = "HIGH".
-- Nếu có cảnh báo WARNING hoặc SUGGESTION cần lưu ý: verdict = "COMMENT", riskLevel = "MEDIUM".
-- Nếu code tốt, không có vấn đề gì: verdict = "APPROVE", riskLevel = "LOW", comments = [].
+    console.log(
+      `[MultiAgentReview] Running Lead Consolidator & False-Positive Filter...`,
+    );
+    const finalResult = await this.consolidateReviews(
+      allRoleOutputs,
+      batches,
+      contextSection,
+      customRulesSection,
+    );
 
-DIFF CẦN REVIEW:
-${formattedDiff}
-`;
-
-    try {
-      const response = await this.client.chat.completions.create({
-        model: this.model,
-        messages: [
-          {
-            role: "system",
-            content: systemPrompt,
-          },
-          { role: "user", content: prompt },
-        ],
-        response_format: { type: "json_object" },
-      });
-
-      const rawText = response.choices[0]?.message?.content || "{}";
-      const cleanedText = this.cleanJsonResponse(rawText);
-      const result = JSON.parse(cleanedText) as AIReviewResult;
-
-      return {
-        summary: result.summary || "Đã hoàn thành review code.",
-        verdict: result.verdict || (result.comments && result.comments.length > 0 ? "COMMENT" : "APPROVE"),
-        riskLevel: result.riskLevel || (result.comments && result.comments.length > 0 ? "MEDIUM" : "LOW"),
-        comments: Array.isArray(result.comments) ? result.comments : [],
-      };
-    } catch (error) {
-      console.error("Error with AI review:", error);
-      return {
-        summary: "Đã xảy ra lỗi trong quá trình phân tích code bằng AI.",
-        verdict: "COMMENT",
-        riskLevel: "HIGH",
-        comments: [],
-      };
-    }
+    return finalResult;
   }
 }
