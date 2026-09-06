@@ -35,26 +35,30 @@ export class AIClient {
   private model: string;
 
   constructor() {
-    const apiKey = process.env.GROQ_API_KEY || process.env.GLM_API_KEY;
-    if (!apiKey) {
-      console.error("GROQ_API_KEY (or GLM_API_KEY) is not defined in .env file");
-    }
+    const apiKey =
+      process.env.NINE_ROUTER_API_KEY ||
+      process.env.GROQ_API_KEY ||
+      process.env.GLM_API_KEY ||
+      "9router-local";
 
-    // Groq / OpenAI-compatible endpoint
     const baseURL =
+      process.env.NINE_ROUTER_URL ||
       process.env.GROQ_BASE_URL ||
       (process.env.GROQ_API_KEY
         ? "https://api.groq.com/openai/v1"
-        : "https://bigmodel.cn/api/paas/v4/");
+        : process.env.GLM_API_KEY
+        ? "https://bigmodel.cn/api/paas/v4/"
+        : "http://localhost:20128/v1/");
 
     this.client = new OpenAI({
-      apiKey: (apiKey || "").trim(),
-      baseURL,
+      apiKey: apiKey.trim(),
+      baseURL: baseURL.trim(),
     });
     this.model =
+      process.env.NINE_ROUTER_MODEL ||
       process.env.GROQ_MODEL ||
       process.env.GLM_MODEL ||
-      "llama-3.3-70b-versatile";
+      "auto";
   }
 
   /**
