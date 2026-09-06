@@ -13,6 +13,14 @@ const gitlab = new GitLabClient();
 const ai = new AIClient();
 const notifier = new GoogleChatNotifier();
 
+process.on("uncaughtException", (error) => {
+  console.error("[Fatal] Uncaught Exception:", error);
+});
+
+process.on("unhandledRejection", (reason, promise) => {
+  console.error("[Fatal] Unhandled Rejection at:", promise, "reason:", reason);
+});
+
 app.use(express.json());
 
 app.get("/", (req, res) => {

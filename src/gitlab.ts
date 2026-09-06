@@ -15,11 +15,23 @@ export class GitLabClient {
 
   async getMergeRequestDiff(projectId: string | number, mergeRequestIid: number) {
     try {
+      // Ưu tiên dùng allDiffs (GitLab API v4 mới nhất)
+      if (typeof this.api.MergeRequests.allDiffs === "function") {
+        const diffs = await this.api.MergeRequests.allDiffs(projectId, mergeRequestIid);
+        return diffs || [];
+      }
+      // Fallback nếu dùng GitLab phiên bản cũ
       const response = await this.api.MergeRequests.showChanges(projectId, mergeRequestIid);
       return response.changes || [];
     } catch (error: any) {
       console.error(`Error fetching MR changes:`, error.message);
-      throw error;
+      // Fallback thử lại phương thức còn lại nếu gặp lỗi
+      try {
+        const response = await this.api.MergeRequests.showChanges(projectId, mergeRequestIid);
+        return response.changes || [];
+      } catch {
+        throw error;
+      }
     }
   }
 
@@ -39,7 +51,6 @@ export class GitLabClient {
     type: "new" | "old" 
   }, diffRefs: any) {
     try {
-      // Đảm bảo các SHA không bị trống
       if (!diffRefs.base_sha || !diffRefs.head_sha || !diffRefs.start_sha) {
         throw new Error("Missing SHA in diffRefs");
       }
@@ -57,7 +68,6 @@ export class GitLabClient {
         }
       });
     } catch (error: any) {
-      // Re-throw để index.ts xử lý fallback
       throw error;
     }
   }
