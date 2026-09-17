@@ -155,4 +155,56 @@ describe('AIClient Review Strategies', () => {
     assert.strictEqual(result.verdict, 'COMMENT');
     assert.strictEqual(result.riskLevel, 'MEDIUM');
   });
+
+  it('should include commit history and impact analysis report in review prompt', async () => {
+    let capturedPrompt = '';
+    const mockOpenAI: any = {
+      chat: {
+        completions: {
+          create: async (params: any) => {
+            capturedPrompt = params.messages[1].content;
+            return {
+              choices: [
+                {
+                  message: {
+                    content: JSON.stringify({
+                      summary: 'Review completed with impact check.',
+                      verdict: 'APPROVE',
+                      riskLevel: 'LOW',
+                      comments: [],
+                    }),
+                  },
+                },
+              ],
+            };
+          },
+        },
+      },
+    };
+
+    const ai = new AIClient(mockOpenAI, 'test-model', 'unified');
+    const diffs = [{ new_path: 'src/order.ts', diff: '@@ -1,2 +1,2 @@\n- a\n+ b' }];
+
+    await ai.reviewCode(diffs, {
+      title: 'Update order logic',
+      author: 'dev',
+      repoName: 'shop',
+      targetBranch: 'main',
+      commits: [
+        { hash: 'abc1234', message: 'fix order total', author: 'dev' },
+      ],
+      impactReport: {
+        modifiedSymbols: ['calculateTotal'],
+        impactedFiles: ['src/checkout.ts'],
+        references: [],
+        summary: '1 impacted file found.',
+      },
+    });
+
+    assert.ok(capturedPrompt.includes('DANH SÁCH COMMITS MỚI TRONG MR:'));
+    assert.ok(capturedPrompt.includes('abc1234'));
+    assert.ok(capturedPrompt.includes('PHẠM VI ẢNH HƯỞNG (IMPACT ANALYSIS / CALLERS SCAN):'));
+    assert.ok(capturedPrompt.includes('src/checkout.ts'));
+  });
 });
+

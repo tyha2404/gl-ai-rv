@@ -1,5 +1,6 @@
 import dotenv from "dotenv";
 import OpenAI from "openai";
+import { ImpactAnalysisReport } from "./analyzer/impact";
 import { loadProjectRules } from "./config/rules";
 import {
   LEAD_CONSOLIDATOR_PROMPT,
@@ -9,6 +10,7 @@ import {
 import { extractTechStackSummary } from "./utils/context";
 import { chunkDiffs, DiffBatch, GitLabDiffItem } from "./utils/diff";
 import { callWithRetry, RateLimitQueue } from "./utils/rateLimiter";
+import { GitCommitInfo } from "./workspace";
 
 dotenv.config();
 
@@ -30,6 +32,7 @@ export interface AIReviewResult {
   verdict: "APPROVE" | "REQUEST_CHANGES" | "COMMENT";
   riskLevel: "LOW" | "MEDIUM" | "HIGH";
   comments: AIReviewComment[];
+  impactAssessment?: string | undefined;
 }
 
 export interface MRContext {
@@ -40,6 +43,8 @@ export interface MRContext {
   description?: string | undefined;
   customRules?: string | undefined;
   techStack?: string | undefined;
+  commits?: GitCommitInfo[] | undefined;
+  impactReport?: ImpactAnalysisReport | undefined;
 }
 
 export interface RoleReviewOutput {
@@ -472,6 +477,15 @@ BẮT BUỘC TRẢ VỀ ĐÚNG SCHEMA JSON:
       };
     }
 
+    const commitsSection =
+      mrContext?.commits && mrContext.commits.length > 0
+        ? `\nDANH SÁCH COMMITS MỚI TRONG MR:\n${mrContext.commits.map((c) => `- [${c.hash}] ${c.message} (${c.author})`).join("\n")}`
+        : "";
+
+    const impactSection = mrContext?.impactReport
+      ? `\nPHẠM VI ẢNH HƯỞNG (IMPACT ANALYSIS / CALLERS SCAN):\n- Tóm tắt: ${mrContext.impactReport.summary}\n${mrContext.impactReport.impactedFiles.length > 0 ? `- Các file phụ thuộc cần lưu ý (${mrContext.impactReport.impactedFiles.length} files): ${mrContext.impactReport.impactedFiles.slice(0, 10).join(", ")}` : ""}`
+      : "";
+
     const contextSection = mrContext
       ? `
 THÔNG TIN MERGE REQUEST:
@@ -479,7 +493,7 @@ THÔNG TIN MERGE REQUEST:
 - Tác giả: ${mrContext.author}
 - Repository: ${mrContext.repoName}
 - Target Branch: ${mrContext.targetBranch}
-${mrContext.description ? `- Mô tả: ${mrContext.description}` : ""}
+${mrContext.description ? `- Mô tả: ${mrContext.description}` : ""}${commitsSection}${impactSection}
 `.trim()
       : "";
 

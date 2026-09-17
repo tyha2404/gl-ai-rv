@@ -141,4 +141,54 @@ describe('GoogleChatNotifier', () => {
     assert.strictEqual(card.sections[2].widgets[1].textParagraph.text, 'Fix <i>this</i> part.');
     assert.strictEqual(card.sections[2].widgets[2].decoratedText.text, '<pre>const x = &lt;tag&gt;safe&lt;/tag&gt;;</pre>');
   });
+
+  it('should render commits and impact analysis section when provided', async () => {
+    process.env.GOOGLE_CHAT_WEBHOOK_URL = 'http://webhook.url';
+    const notifier = new GoogleChatNotifier();
+
+    let fetchOptions: any = {};
+    global.fetch = (async (url: string, options: any) => {
+      fetchOptions = options;
+      return { ok: true } as Response;
+    }) as any;
+
+    const payload: NotificationPayload = {
+      title: 'Feature Refactor',
+      author: 'Alice',
+      url: 'http://gitlab.com/mr/10',
+      repoName: 'my-service',
+      mrId: 10,
+      targetBranch: 'main',
+      summary: 'Refactored auth module',
+      verdict: 'APPROVE',
+      riskLevel: 'LOW',
+      commits: [
+        { hash: '1a2b3c4', message: 'refactor auth token helper', author: 'Alice' },
+      ],
+      impactReport: {
+        modifiedSymbols: ['verifyToken'],
+        impactedFiles: ['src/middleware/auth.ts', 'src/routes/user.ts'],
+        references: [],
+        summary: '2 external files use verifyToken.',
+      },
+      comments: [],
+    };
+
+    await notifier.sendReviewNotification(payload);
+
+    const body = JSON.parse(fetchOptions.body);
+    const sections = body.cardsV2[0].card.sections;
+
+    // Check MR info widgets contains commits widget
+    const mrInfoWidgets = sections[0].widgets;
+    assert.strictEqual(mrInfoWidgets.length, 4);
+    assert.ok(mrInfoWidgets[3].decoratedText.text.includes('1a2b3c4'));
+
+    // Check Impact section exists
+    const impactSection = sections.find((s: any) => s.header?.includes('Phạm vi ảnh hưởng'));
+    assert.ok(impactSection);
+    assert.ok(impactSection.widgets[0].textParagraph.text.includes('2 external files'));
+    assert.ok(impactSection.widgets[1].decoratedText.text.includes('src/middleware/auth.ts'));
+  });
 });
+

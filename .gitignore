@@ -37,6 +37,9 @@ build/Release
 # Dependency directories
 node_modules/
 jspm_packages/
+workspaces/
+tmp_test_workspaces/
+tmp_impact_test/
 
 # TypeScript v1 declaration files
 typings/
@@ -104,6 +107,7 @@ ai-knownlege
 !CRON-JOBS-TIMELINE.md
 !GEMINI.md
 !docs/superpowers/specs/*.md
+!docs/superpowers/plans/*.md
 
 docs/*
 !docs/superpowers/

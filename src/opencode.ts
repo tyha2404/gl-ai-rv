@@ -1,0 +1,243 @@
+import { execFile, spawn } from "node:child_process";
+import { AIReviewComment, AIReviewResult } from "./ai";
+import { ImpactAnalysisReport } from "./analyzer/impact";
+import { GitCommitInfo } from "./workspace";
+
+export interface OpenCodeReviewOptions {
+  repoPath: string;
+  title: string;
+  author: string;
+  repoName: string;
+  targetBranch: string;
+  description?: string;
+  commits?: GitCommitInfo[];
+  rawDiff?: string;
+  impactReport?: ImpactAnalysisReport;
+  timeoutMs?: number;
+}
+
+export class OpenCodeRunner {
+  private opencodeBin: string;
+
+  constructor(binPath?: string) {
+    this.opencodeBin = binPath || process.env.OPENCODE_BIN || "opencode";
+  }
+
+  public buildReviewPrompt(options: {
+    title: string;
+    author: string;
+    repoName: string;
+    targetBranch: string;
+    description?: string | undefined;
+    commits?: GitCommitInfo[] | undefined;
+    rawDiff?: string | undefined;
+    impactSummary?: string | undefined;
+  }): string {
+    const commitsText =
+      options.commits && options.commits.length > 0
+        ? options.commits
+            .map((c) => `- [${c.hash}] ${c.message} (${c.author})`)
+            .join("\n")
+        : "Không có commit log";
+
+    return `
+Bạn là AI Senior Code Reviewer & Software Architect. Bạn đang ở trong thư mục codebase của dự án '${options.repoName}'.
+Hãy đọc ngữ cảnh toàn bộ repository và thực hiện review chi tiết các thay đổi của Merge Request.
+
+THÔNG TIN MERGE REQUEST:
+- Tiêu đề: ${options.title}
+- Tác giả: ${options.author}
+- Nhánh đích (Target Branch): ${options.targetBranch}
+${options.description ? `- Mô tả: ${options.description}` : ""}
+
+DANH SÁCH COMMITS MỚI:
+${commitsText}
+
+${options.impactSummary ? `GHI CHÚ VỀ PHẠM VI ẢNH HƯỞNG (CALLERS SCAN):\n${options.impactSummary}\n` : ""}
+
+DIFF CỦA CÁC THAY ĐỔI:
+${options.rawDiff || "(Xem git diff trực tiếp trong repository)"}
+
+NHIỆM VỤ CỦA BẠN:
+1. Đọc các file bị thay đổi và ngữ cảnh các file gọi/liên quan trong repository.
+2. Kiểm tra:
+   - 🚨 Bug & Logic: Null/undefined pointer, race conditions, edge-case bugs.
+   - 🔒 Bảo mật (Security): Injection, leak secret, thiếu validation.
+   - ⚡ Hiệu năng (Performance): N+1 query, blocking operations, memory leak.
+   - 🏛️ Clean Code: SOLID/DRY, type safety.
+   - 💥 Phân tích ảnh hưởng: Kiểm tra xem các nơi gọi hàm/class bị sửa đổi có bị hỏng (breaking changes) không.
+3. BẮT BUỘC TRẢ VỀ DUY NHẤT 1 KHỐI JSON THEO SCHEMA SAU:
+\`\`\`json
+{
+  "summary": "Tóm tắt (2-3 câu) bằng Tiếng Việt về chất lượng MR và phạm vi ảnh hưởng",
+  "verdict": "APPROVE" | "REQUEST_CHANGES" | "COMMENT",
+  "riskLevel": "LOW" | "MEDIUM" | "HIGH",
+  "comments": [
+    {
+      "path": "đường_dẫn_file",
+      "line": 42,
+      "severity": "CRITICAL" | "WARNING" | "SUGGESTION",
+      "category": "SECURITY" | "BUG" | "PERFORMANCE" | "CLEAN_CODE",
+      "text": "Mô tả vấn đề và rủi ro",
+      "suggestion": "Code gợi ý sửa đổi"
+    }
+  ]
+}
+\`\`\`
+`.trim();
+  }
+
+  public parseOpenCodeOutput(rawOutput: string): AIReviewResult {
+    let clean = rawOutput.trim();
+    if (clean.includes("```json")) {
+      const match = clean.match(/```json\s*([\s\S]*?)\s*```/);
+      if (match && match[1]) {
+        clean = match[1].trim();
+      }
+    } else if (clean.includes("```")) {
+      const match = clean.match(/```\s*([\s\S]*?)\s*```/);
+      if (match && match[1]) {
+        clean = match[1].trim();
+      }
+    }
+
+    const firstBrace = clean.indexOf("{");
+    const lastBrace = clean.lastIndexOf("}");
+    if (firstBrace !== -1 && lastBrace !== -1 && lastBrace > firstBrace) {
+      clean = clean.substring(firstBrace, lastBrace + 1);
+    }
+
+    try {
+      const parsed = JSON.parse(clean);
+      const comments: AIReviewComment[] = Array.isArray(parsed.comments)
+        ? parsed.comments.map((c: any) => ({
+            path: String(c.path || ""),
+            line: Number(c.line) || 1,
+            severity: (["CRITICAL", "WARNING", "SUGGESTION"].includes(
+              c.severity,
+            )
+              ? c.severity
+              : "WARNING") as any,
+            category: ([
+              "SECURITY",
+              "PERFORMANCE",
+              "CLEAN_CODE",
+              "BUG",
+            ].includes(c.category)
+              ? c.category
+              : "BUG") as any,
+            text: String(c.text || ""),
+            suggestion: c.suggestion ? String(c.suggestion) : undefined,
+          }))
+        : [];
+
+      return {
+        summary:
+          parsed.summary ||
+          "OpenCode đã hoàn thành phân tích repository và Merge Request.",
+        verdict:
+          parsed.verdict || (comments.length > 0 ? "COMMENT" : "APPROVE"),
+        riskLevel: parsed.riskLevel || (comments.length > 0 ? "MEDIUM" : "LOW"),
+        comments,
+      };
+    } catch (err) {
+      console.warn("[OpenCodeRunner] Failed to parse JSON from output:", err);
+      return {
+        summary: rawOutput.slice(0, 500) || "Đã chạy OpenCode review xong.",
+        verdict: "COMMENT",
+        riskLevel: "LOW",
+        comments: [],
+      };
+    }
+  }
+
+  /**
+   * Khởi chạy OpenCode CLI trên VPS trong thư mục repo, thu thập kết quả và tự động tắt process
+   */
+  public async runReview(
+    options: OpenCodeReviewOptions,
+  ): Promise<AIReviewResult> {
+    const prompt = this.buildReviewPrompt({
+      title: options.title,
+      author: options.author,
+      repoName: options.repoName,
+      targetBranch: options.targetBranch,
+      description: options.description,
+      commits: options.commits,
+      rawDiff: options.rawDiff,
+      impactSummary: options.impactReport?.summary,
+    });
+
+    const timeoutMs =
+      options.timeoutMs ||
+      Number(process.env.OPENCODE_TIMEOUT_MS) ||
+      5 * 60 * 1000;
+
+    console.log(
+      `[OpenCodeRunner] Starting OpenCode CLI in ${options.repoPath}...`,
+    );
+
+    return new Promise<AIReviewResult>((resolve, reject) => {
+      let stdoutData = "";
+      let stderrData = "";
+      let isFinished = false;
+
+      // Spawn opencode process
+      const child = spawn(this.opencodeBin, ["run", prompt], {
+        cwd: options.repoPath,
+        env: { ...process.env },
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+
+      const timer = setTimeout(() => {
+        if (!isFinished) {
+          isFinished = true;
+          console.warn(
+            `[OpenCodeRunner] Process timed out after ${timeoutMs}ms, killing...`,
+          );
+          child.kill("SIGKILL");
+          reject(new Error(`OpenCode execution timed out after ${timeoutMs}ms`));
+        }
+      }, timeoutMs);
+
+      child.stdout.on("data", (chunk) => {
+        stdoutData += chunk.toString();
+      });
+
+      child.stderr.on("data", (chunk) => {
+        stderrData += chunk.toString();
+      });
+
+      child.on("error", (err) => {
+        if (!isFinished) {
+          isFinished = true;
+          clearTimeout(timer);
+          console.error("[OpenCodeRunner] Spawn error:", err);
+          reject(err);
+        }
+      });
+
+      child.on("close", (code) => {
+        if (isFinished) return;
+        isFinished = true;
+        clearTimeout(timer);
+
+        console.log(
+          `[OpenCodeRunner] OpenCode process exited with code ${code}. Session closed.`,
+        );
+
+        if (code !== 0 && !stdoutData.trim()) {
+          reject(
+            new Error(
+              `OpenCode failed with code ${code}: ${stderrData.slice(0, 300)}`,
+            ),
+          );
+          return;
+        }
+
+        const reviewResult = this.parseOpenCodeOutput(stdoutData);
+        resolve(reviewResult);
+      });
+    });
+  }
+}

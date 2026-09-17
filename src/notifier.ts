@@ -1,4 +1,6 @@
 import { AIReviewComment } from "./ai";
+import { ImpactAnalysisReport } from "./analyzer/impact";
+import { GitCommitInfo } from "./workspace";
 
 export interface NotificationPayload {
   title: string;
@@ -11,6 +13,8 @@ export interface NotificationPayload {
   verdict?: ("APPROVE" | "REQUEST_CHANGES" | "COMMENT") | undefined;
   riskLevel?: ("LOW" | "MEDIUM" | "HIGH") | undefined;
   comments: AIReviewComment[];
+  commits?: GitCommitInfo[] | undefined;
+  impactReport?: ImpactAnalysisReport | undefined;
 }
 
 export class GoogleChatNotifier {
@@ -80,32 +84,52 @@ export class GoogleChatNotifier {
       return;
     }
 
+    const mrInfoWidgets: any[] = [
+      {
+        decoratedText: {
+          topLabel: "Repository",
+          text: `<b>${this.escapeHtml(data.repoName)}</b>`,
+          startIcon: { knownIcon: "STAR" },
+        },
+      },
+      {
+        decoratedText: {
+          topLabel: "Merge Request",
+          text: `#${data.mrId} → <code>${this.escapeHtml(data.targetBranch)}</code>`,
+          startIcon: { knownIcon: "DESCRIPTION" },
+        },
+      },
+      {
+        decoratedText: {
+          topLabel: "Author",
+          text: this.escapeHtml(data.author),
+          startIcon: { knownIcon: "PERSON" },
+        },
+      },
+    ];
+
+    if (data.commits && data.commits.length > 0) {
+      const commitListStr = data.commits
+        .slice(0, 5)
+        .map(
+          (c) =>
+            `• <code>${this.escapeHtml(c.hash)}</code>: ${this.escapeHtml(c.message)} (<i>${this.escapeHtml(c.author)}</i>)`,
+        )
+        .join("<br>");
+      mrInfoWidgets.push({
+        decoratedText: {
+          topLabel: `Commits mới (${data.commits.length})`,
+          text: commitListStr,
+          wrapText: true,
+          startIcon: { knownIcon: "BOOKMARK" },
+        },
+      });
+    }
+
     const sections: any[] = [
       {
         header: "📋 Thông tin Merge Request",
-        widgets: [
-          {
-            decoratedText: {
-              topLabel: "Repository",
-              text: `<b>${this.escapeHtml(data.repoName)}</b>`,
-              startIcon: { knownIcon: "STAR" },
-            },
-          },
-          {
-            decoratedText: {
-              topLabel: "Merge Request",
-              text: `#${data.mrId} → <code>${this.escapeHtml(data.targetBranch)}</code>`,
-              startIcon: { knownIcon: "DESCRIPTION" },
-            },
-          },
-          {
-            decoratedText: {
-              topLabel: "Author",
-              text: this.escapeHtml(data.author),
-              startIcon: { knownIcon: "PERSON" },
-            },
-          },
-        ],
+        widgets: mrInfoWidgets,
       },
       {
         header: "🤖 AI Review Assessment",
@@ -139,6 +163,36 @@ export class GoogleChatNotifier {
         ],
       },
     ];
+
+    if (data.impactReport) {
+      const impactWidgets: any[] = [
+        {
+          textParagraph: {
+            text: this.formatSummary(data.impactReport.summary),
+          },
+        },
+      ];
+
+      if (data.impactReport.impactedFiles.length > 0) {
+        const fileListStr = data.impactReport.impactedFiles
+          .slice(0, 8)
+          .map((f) => `📁 <code>${this.escapeHtml(f)}</code>`)
+          .join("<br>");
+        impactWidgets.push({
+          decoratedText: {
+            topLabel: `Các file bị ảnh hưởng gián tiếp (${data.impactReport.impactedFiles.length})`,
+            text: fileListStr,
+            wrapText: true,
+            startIcon: { knownIcon: "MULTIPLE_PEOPLE" },
+          },
+        });
+      }
+
+      sections.push({
+        header: "💥 Phạm vi ảnh hưởng (Impact Analysis)",
+        widgets: impactWidgets,
+      });
+    }
 
     // Add sections for each comment (limit to top 10)
     const displayComments = data.comments.slice(0, 10);
