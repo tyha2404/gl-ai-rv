@@ -6,7 +6,9 @@
   "scripts": {
     "start": "ts-node src/index.ts",
     "dev": "nodemon --watch 'src/**/*.ts' --exec 'ts-node' src/index.ts",
-    "test": "node -r ts-node/register --test 'src/**/*.test.ts' 'src/*.test.ts'"
+    "test": "node -r ts-node/register --test 'src/**/*.test.ts' 'src/*.test.ts'",
+    "format": "prettier --write .",
+    "format:check": "prettier --check ."
   },
   "keywords": [],
   "author": "",
@@ -22,6 +24,7 @@
     "@types/express": "^5.0.6",
     "@types/node": "^25.9.1",
     "nodemon": "^3.1.14",
+    "prettier": "^3.9.7",
     "ts-node": "^10.9.2",
     "typescript": "^6.0.3"
   }

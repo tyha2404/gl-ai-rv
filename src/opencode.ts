@@ -185,7 +185,10 @@ NHIỆM VỤ CỦA BẠN:
       // Prepare CLI arguments
       const args = ["run", prompt];
       let model = (process.env.OPENCODE_MODEL || "opencode/big-pickle").trim();
-      if (model.toLowerCase() === "big pickle" || model.toLowerCase() === "big-pickle") {
+      if (
+        model.toLowerCase() === "big pickle" ||
+        model.toLowerCase() === "big-pickle"
+      ) {
         model = "opencode/big-pickle";
       }
       if (model) {
@@ -206,7 +209,9 @@ NHIỆM VỤ CỦA BẠN:
             `[OpenCodeRunner] Process timed out after ${timeoutMs}ms, killing...`,
           );
           child.kill("SIGKILL");
-          reject(new Error(`OpenCode execution timed out after ${timeoutMs}ms`));
+          reject(
+            new Error(`OpenCode execution timed out after ${timeoutMs}ms`),
+          );
         }
       }, timeoutMs);
 

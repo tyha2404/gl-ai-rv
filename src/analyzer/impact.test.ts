@@ -2,10 +2,7 @@ import assert from "node:assert";
 import fs from "node:fs";
 import path from "node:path";
 import test, { describe } from "node:test";
-import {
-  extractModifiedSymbolsFromDiff,
-  ImpactAnalyzer,
-} from "./impact";
+import { extractModifiedSymbolsFromDiff, ImpactAnalyzer } from "./impact";
 
 describe("ImpactAnalyzer", () => {
   const dummyWorkspace = path.join(__dirname, "../../tmp_impact_test");

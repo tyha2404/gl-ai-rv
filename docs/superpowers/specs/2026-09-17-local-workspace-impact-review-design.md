@@ -1,6 +1,7 @@
 # Thiết Kế: Local Workspace & Impact Analysis Review Cho GitLab MR
 
 ## 1. Mục tiêu (Goals)
+
 - Khi có sự kiện Merge Request (MR) trên GitLab, hệ thống tự động clone hoặc cập nhật mã nguồn của repository về thư mục làm việc cục bộ trên máy chủ VPS (`./workspaces/...`).
 - Checkout chính xác nhánh MR (`source_branch`) và pull code mới nhất.
 - Đọc các commit mới thay đổi, trích xuất diff và toàn bộ ngữ cảnh mã nguồn liên quan.
@@ -26,6 +27,7 @@ flowchart TD
 ```
 
 ### 2.1. Quản lý Workspace (`src/workspace.ts`)
+
 - **Đường dẫn lưu trữ:** `./workspaces/<project_id_or_slug>/`
 - **Quản lý Git:**
   - Tạo URL clone có gắn `GITLAB_TOKEN`: `https://oauth2:${token}@${host}/${project_path}.git`
@@ -36,12 +38,14 @@ flowchart TD
   - Lấy git diff giữa target branch và source branch: `git diff origin/<target_branch>...origin/<source_branch>`
 
 ### 2.2. Phân tích ảnh hưởng (`src/analyzer/impact.ts`)
+
 - **Phát hiện Symbol:** Quét các dòng code bị xoá/sửa trong diff để trích xuất danh sách tên hàm (`function xyz`, `const abc = ...`), class, interface, exported members hoặc endpoint URL.
 - **Quét vị trí gọi (Usages / Callers Scan):**
   - Thực hiện quét trong toàn bộ thư mục repo cục bộ để xác định các file khác đang import hoặc gọi các symbol bị thay đổi.
-  - Tổng hợp danh sách `impactedFiles` và `impactSummary` (ví dụ: *Hàm `calculateTotal` bị thay đổi tham số có 4 nơi gọi tại `src/orders/checkout.ts`, `src/services/billing.ts`...*).
+  - Tổng hợp danh sách `impactedFiles` và `impactSummary` (ví dụ: _Hàm `calculateTotal` bị thay đổi tham số có 4 nơi gọi tại `src/orders/checkout.ts`, `src/services/billing.ts`..._).
 
 ### 2.3. AI Reviewer Prompt Nâng Cao (`src/ai.ts` & `src/roles/prompts.ts`)
+
 - Bổ sung trường dữ liệu:
   - `newCommits`: Danh sách commit mới trong MR.
   - `impactAnalysis`: Kết quả quét ảnh hưởng từ `ImpactAnalyzer`.
@@ -51,6 +55,7 @@ flowchart TD
   - `impactDetails`: Mô tả chi tiết các module/chức năng phụ thuộc cần test lại.
 
 ### 2.4. Google Chat Notifier (`src/notifier.ts`)
+
 - Bổ sung section `💥 Phạm vi ảnh hưởng (Impact Analysis)` vào Cards V2:
   - Liệt kê các file/module bị ảnh hưởng gián tiếp.
   - Khuyến nghị các khu vực cần regression test.
@@ -59,6 +64,7 @@ flowchart TD
 ---
 
 ## 3. Xử lý lỗi & Độ ổn định (Error Handling & Robustness)
+
 - **Token Security:** Đảm bảo không ghi đè token GitLab vào log console khi chạy lệnh `git clone`.
 - **Concurrent Safety:** Khoá mutex hoặc quản lý queue theo repository để tránh 2 MR của cùng 1 repo checkout đè lên nhau cùng lúc.
 - **Fallback:** Nếu việc clone/fetch git gặp sự cố (ví dụ lỗi mạng), hệ thống tự động fallback sang lấy diff từ GitLab API như hiện tại để không làm gián đoạn việc review.
@@ -66,6 +72,7 @@ flowchart TD
 ---
 
 ## 4. Kế hoạch xác thực (Verification Plan)
+
 - **Unit Test:**
   - Test `WorkspaceManager`: kiểm tra xử lý git clone / fetch / log parsing.
   - Test `ImpactAnalyzer`: kiểm tra khả năng trích xuất symbol và tìm kiếm nơi gọi trong thư mục test.

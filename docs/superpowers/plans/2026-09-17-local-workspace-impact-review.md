@@ -13,6 +13,7 @@
 ### Task 1: Tạo `WorkspaceManager` để Clone, Fetch, Checkout & Lấy Commit/Diff
 
 **Files:**
+
 - Create: `src/workspace.ts`
 - Test: `src/workspace.test.ts`
 
@@ -37,7 +38,10 @@ describe("WorkspaceManager", () => {
     });
 
     const repoDir = wm.getRepoPath("group/subgroup/my-repo");
-    assert.strictEqual(repoDir, path.join(testBaseDir, "group_subgroup_my-repo"));
+    assert.strictEqual(
+      repoDir,
+      path.join(testBaseDir, "group_subgroup_my-repo"),
+    );
 
     const cloneUrl = wm.getAuthenticatedCloneUrl("group/my-repo");
     assert.strictEqual(
@@ -48,7 +52,8 @@ describe("WorkspaceManager", () => {
 
   test("should parse git commit logs correctly", () => {
     const wm = new WorkspaceManager({ baseDir: testBaseDir });
-    const rawLog = "a1b2c3d - feat: add auth service (Alice)\ne4f5g6h - fix: typo in readme (Bob)";
+    const rawLog =
+      "a1b2c3d - feat: add auth service (Alice)\ne4f5g6h - fix: typo in readme (Bob)";
     const parsed = wm.parseGitLog(rawLog);
 
     assert.strictEqual(parsed.length, 2);
@@ -233,7 +238,7 @@ export class WorkspaceManager {
         [
           "log",
           `origin/${options.targetBranch}..origin/${options.sourceBranch}`,
-          '--pretty=format:%h - %s (%an)',
+          "--pretty=format:%h - %s (%an)",
         ],
         repoPath,
       );
@@ -245,13 +250,16 @@ export class WorkspaceManager {
           [
             "log",
             `${options.targetBranch}..${options.sourceBranch}`,
-            '--pretty=format:%h - %s (%an)',
+            "--pretty=format:%h - %s (%an)",
           ],
           repoPath,
         );
         commits = this.parseGitLog(logOut);
       } catch (err: any) {
-        console.warn(`[WorkspaceManager] Failed to get commit logs:`, err?.message);
+        console.warn(
+          `[WorkspaceManager] Failed to get commit logs:`,
+          err?.message,
+        );
       }
     }
 
@@ -300,6 +308,7 @@ git commit -m "feat: add WorkspaceManager for local git repo management and comm
 ### Task 2: Tạo `ImpactAnalyzer` để Quét Callers/Usages và Phân Tích Phạm Vi Ảnh Hưởng (Blast Radius)
 
 **Files:**
+
 - Create: `src/analyzer/impact.ts`
 - Test: `src/analyzer/impact.test.ts`
 
@@ -311,10 +320,7 @@ import assert from "node:assert";
 import fs from "node:fs";
 import path from "node:path";
 import test, { describe } from "node:test";
-import {
-  extractModifiedSymbolsFromDiff,
-  ImpactAnalyzer,
-} from "./impact";
+import { extractModifiedSymbolsFromDiff, ImpactAnalyzer } from "./impact";
 
 describe("ImpactAnalyzer", () => {
   const dummyWorkspace = path.join(__dirname, "../tmp_impact_test");
@@ -420,7 +426,16 @@ export function extractModifiedSymbolsFromDiff(rawDiff: string): string[] {
         const name = match[1];
         if (
           name.length > 2 &&
-          !["if", "for", "while", "switch", "return", "true", "false", "null"].includes(name)
+          ![
+            "if",
+            "for",
+            "while",
+            "switch",
+            "return",
+            "true",
+            "false",
+            "null",
+          ].includes(name)
         ) {
           symbols.add(name);
         }
@@ -435,7 +450,9 @@ export class ImpactAnalyzer {
   private maxFilesToScan: number;
   private maxReferences: number;
 
-  constructor(options: { maxFilesToScan?: number; maxReferences?: number } = {}) {
+  constructor(
+    options: { maxFilesToScan?: number; maxReferences?: number } = {},
+  ) {
     this.maxFilesToScan = options.maxFilesToScan || 500;
     this.maxReferences = options.maxReferences || 50;
   }
@@ -475,7 +492,8 @@ export class ImpactAnalyzer {
         modifiedSymbols,
         impactedFiles: [],
         references: [],
-        summary: "Không phát hiện symbol thay đổi đáng chú ý hoặc không có workspace.",
+        summary:
+          "Không phát hiện symbol thay đổi đáng chú ý hoặc không có workspace.",
       };
     }
 
@@ -483,7 +501,9 @@ export class ImpactAnalyzer {
     const references: ImpactReference[] = [];
     const impactedFilesSet = new Set<string>();
 
-    const normalizedChangedFiles = changedFilePaths.map((p) => path.normalize(p));
+    const normalizedChangedFiles = changedFilePaths.map((p) =>
+      path.normalize(p),
+    );
 
     for (const filePath of allFiles) {
       if (references.length >= this.maxReferences) break;
@@ -491,8 +511,9 @@ export class ImpactAnalyzer {
       const relativeFilePath = path.relative(workspaceDir, filePath);
       // Bỏ qua chính các file đã bị thay đổi trong MR
       if (
-        normalizedChangedFiles.some((cf) =>
-          relativeFilePath.endsWith(cf) || cf.endsWith(relativeFilePath),
+        normalizedChangedFiles.some(
+          (cf) =>
+            relativeFilePath.endsWith(cf) || cf.endsWith(relativeFilePath),
         )
       ) {
         continue;
@@ -562,6 +583,7 @@ git commit -m "feat: add ImpactAnalyzer for symbol extraction and workspace call
 ### Task 3: Cập nhật `AIClient` & Prompt để Tích Hợp Commit Log & Impact Analysis
 
 **Files:**
+
 - Modify: `src/ai.ts`
 - Modify: `src/roles/prompts.ts`
 - Test: `src/ai.test.ts`
@@ -615,6 +637,7 @@ git commit -m "feat: enhance AIClient with commit history and impact analysis co
 ### Task 4: Nâng Cấp `GoogleChatNotifier` Cards V2 với Section "💥 Phạm vi ảnh hưởng" và "Danh sách Commit"
 
 **Files:**
+
 - Modify: `src/notifier.ts`
 - Test: `src/notifier.test.ts`
 
@@ -643,6 +666,7 @@ git commit -m "feat: display impact analysis and commit history in Google Chat C
 ### Task 5: Kết Nối Toàn Bộ Flow Trong `src/index.ts` và Chạy E2E Verification
 
 **Files:**
+
 - Modify: `src/index.ts`
 
 - [ ] **Step 1: Cập nhật `handleAIReview` và endpoint `/webhook`**

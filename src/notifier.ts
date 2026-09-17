@@ -80,7 +80,9 @@ export class GoogleChatNotifier {
 
   async sendReviewNotification(data: NotificationPayload): Promise<void> {
     if (!this.webhookUrl) {
-      console.warn("GOOGLE_CHAT_WEBHOOK_URL is not defined. Skipping notification.");
+      console.warn(
+        "GOOGLE_CHAT_WEBHOOK_URL is not defined. Skipping notification.",
+      );
       return;
     }
 

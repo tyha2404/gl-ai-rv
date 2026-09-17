@@ -1,0 +1,10 @@
+node_modules/
+dist/
+build/
+workspaces/
+tmp_test_workspaces/
+tmp_impact_test/
+coverage/
+.nyc_output/
+*.log
+package-lock.json

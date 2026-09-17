@@ -1,20 +1,20 @@
-import { describe, it } from 'node:test';
-import assert from 'node:assert';
-import { callWithRetry, RateLimitQueue } from './rateLimiter';
+import { describe, it } from "node:test";
+import assert from "node:assert";
+import { callWithRetry, RateLimitQueue } from "./rateLimiter";
 
-describe('RateLimiter & Retry Utilities', () => {
-  it('should successfully return result without retry on first try', async () => {
+describe("RateLimiter & Retry Utilities", () => {
+  it("should successfully return result without retry on first try", async () => {
     let callCount = 0;
     const result = await callWithRetry(async () => {
       callCount++;
-      return 'success';
+      return "success";
     });
 
-    assert.strictEqual(result, 'success');
+    assert.strictEqual(result, "success");
     assert.strictEqual(callCount, 1);
   });
 
-  it('should retry when encountering a 429 error and succeed', async () => {
+  it("should retry when encountering a 429 error and succeed", async () => {
     let callCount = 0;
     let retryLogged = 0;
 
@@ -22,11 +22,11 @@ describe('RateLimiter & Retry Utilities', () => {
       async () => {
         callCount++;
         if (callCount < 3) {
-          const err: any = new Error('Rate limit exceeded');
+          const err: any = new Error("Rate limit exceeded");
           err.status = 429;
           throw err;
         }
-        return 'recovered';
+        return "recovered";
       },
       {
         initialDelayMs: 10,
@@ -34,22 +34,22 @@ describe('RateLimiter & Retry Utilities', () => {
         onRetry: () => {
           retryLogged++;
         },
-      }
+      },
     );
 
-    assert.strictEqual(result, 'recovered');
+    assert.strictEqual(result, "recovered");
     assert.strictEqual(callCount, 3);
     assert.strictEqual(retryLogged, 2);
   });
 
-  it('should throw error after exceeding maxRetries on 429', async () => {
+  it("should throw error after exceeding maxRetries on 429", async () => {
     let callCount = 0;
     await assert.rejects(
       async () => {
         await callWithRetry(
           async () => {
             callCount++;
-            const err: any = new Error('Too many requests');
+            const err: any = new Error("Too many requests");
             err.status = 429;
             throw err;
           },
@@ -57,18 +57,18 @@ describe('RateLimiter & Retry Utilities', () => {
             initialDelayMs: 10,
             maxRetries: 2,
             onRetry: () => {},
-          }
+          },
         );
       },
       {
-        message: 'Too many requests',
-      }
+        message: "Too many requests",
+      },
     );
 
     assert.strictEqual(callCount, 3); // initial + 2 retries
   });
 
-  it('should throttle requests in RateLimitQueue with min interval', async () => {
+  it("should throttle requests in RateLimitQueue with min interval", async () => {
     const queue = new RateLimitQueue(50);
     const timestamps: number[] = [];
 
