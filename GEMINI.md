@@ -39,15 +39,15 @@ Copy `.env.example` to `.env` and fill in your credentials:
 cp .env.example .env
 ```
 
-| Variable                  | Description                                            | Default                       |
-| :------------------------ | :----------------------------------------------------- | :---------------------------- |
-| `GITLAB_URL`              | The base URL of your GitLab instance                   | `https://gitlab.com`          |
-| `GITLAB_TOKEN`            | Your GitLab Personal Access Token                      |                               |
-| `NINE_ROUTER_URL`         | The base URL of 9Router Gateway                        | `http://localhost:20128/v1/`  |
-| `NINE_ROUTER_API_KEY`     | Your 9Router API Key                                  | `9router-local`               |
-| `NINE_ROUTER_MODEL`       | The AI model to use                                    | `auto`                        |
-| `PORT`                    | The port the server will listen on                     | `3000`                        |
-| `GOOGLE_CHAT_WEBHOOK_URL` | The webhook URL for Google Chat notifications          |                               |
+| Variable                  | Description                                   | Default                      |
+| :------------------------ | :-------------------------------------------- | :--------------------------- |
+| `GITLAB_URL`              | The base URL of your GitLab instance          | `https://gitlab.com`         |
+| `GITLAB_TOKEN`            | Your GitLab Personal Access Token             |                              |
+| `NINE_ROUTER_URL`         | The base URL of 9Router Gateway               | `http://localhost:20128/v1/` |
+| `NINE_ROUTER_API_KEY`     | Your 9Router API Key                          | `9router-local`              |
+| `NINE_ROUTER_MODEL`       | The AI model to use                           | `auto`                       |
+| `PORT`                    | The port the server will listen on            | `3000`                       |
+| `GOOGLE_CHAT_WEBHOOK_URL` | The webhook URL for Google Chat notifications |                              |
 
 ### Commands
 
