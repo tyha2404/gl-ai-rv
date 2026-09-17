@@ -48,7 +48,7 @@ async function handleAIReview(
     url: string;
     repoName: string;
     targetBranch: string;
-    description?: string;
+    description?: string | undefined;
   },
 ) {
   try {

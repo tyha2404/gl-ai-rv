@@ -12,9 +12,9 @@ export interface GitCommitInfo {
 }
 
 export interface WorkspaceManagerOptions {
-  baseDir?: string;
-  gitlabUrl?: string;
-  gitlabToken?: string;
+  baseDir?: string | undefined;
+  gitlabUrl?: string | undefined;
+  gitlabToken?: string | undefined;
 }
 
 export interface SyncBranchOptions {

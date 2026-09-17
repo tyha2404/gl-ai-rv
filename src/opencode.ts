@@ -9,11 +9,11 @@ export interface OpenCodeReviewOptions {
   author: string;
   repoName: string;
   targetBranch: string;
-  description?: string;
-  commits?: GitCommitInfo[];
-  rawDiff?: string;
-  impactReport?: ImpactAnalysisReport;
-  timeoutMs?: number;
+  description?: string | undefined;
+  commits?: GitCommitInfo[] | undefined;
+  rawDiff?: string | undefined;
+  impactReport?: ImpactAnalysisReport | undefined;
+  timeoutMs?: number | undefined;
 }
 
 export class OpenCodeRunner {
