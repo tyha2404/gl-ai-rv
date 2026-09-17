@@ -182,8 +182,15 @@ NHIỆM VỤ CỦA BẠN:
       let stderrData = "";
       let isFinished = false;
 
+      // Prepare CLI arguments
+      const args = ["run", prompt];
+      const model = process.env.OPENCODE_MODEL;
+      if (model && model.trim()) {
+        args.push("-m", model.trim());
+      }
+
       // Spawn opencode process
-      const child = spawn(this.opencodeBin, ["run", prompt], {
+      const child = spawn(this.opencodeBin, args, {
         cwd: options.repoPath,
         env: { ...process.env },
         stdio: ["ignore", "pipe", "pipe"],
