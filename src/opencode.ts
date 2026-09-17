@@ -220,12 +220,24 @@ NHIỆM VỤ CỦA BẠN:
         args.push("-m", model);
       }
 
-      // Spawn opencode process
+      console.log(
+        `[OpenCodeRunner] Starting OpenCode CLI (model: '${model}') in ${options.repoPath}...`,
+      );
+
+      // Spawn opencode process in non-interactive batch mode
       const child = spawn(this.opencodeBin, args, {
         cwd: options.repoPath,
-        env: { ...process.env },
-        stdio: ["ignore", "pipe", "pipe"],
+        env: {
+          ...process.env,
+          CI: "true",
+          TERM: "dumb",
+          NO_COLOR: "1",
+        },
+        stdio: ["pipe", "pipe", "pipe"],
       });
+
+      // Explicitly close stdin to prevent CLI from waiting for user input
+      child.stdin?.end();
 
       const timer = setTimeout(() => {
         if (!isFinished) {
@@ -241,11 +253,13 @@ NHIỆM VỤ CỦA BẠN:
       }, timeoutMs);
 
       child.stdout.on("data", (chunk) => {
-        stdoutData += chunk.toString();
+        const str = chunk.toString();
+        stdoutData += str;
       });
 
       child.stderr.on("data", (chunk) => {
-        stderrData += chunk.toString();
+        const str = chunk.toString();
+        stderrData += str;
       });
 
       child.on("error", (err) => {
