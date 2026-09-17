@@ -194,8 +194,8 @@ export class GoogleChatNotifier {
       });
     }
 
-    // Add sections for each comment (limit to top 10)
-    const displayComments = data.comments.slice(0, 10);
+    // Render all comments in detail
+    const displayComments = data.comments;
     if (displayComments.length > 0) {
       const commentWidgets: any[] = [];
 
@@ -237,20 +237,8 @@ export class GoogleChatNotifier {
       });
 
       sections.push({
-        header: "🔍 Chi tiết vấn đề & Gợi ý sửa",
+        header: `🔍 Chi tiết vấn đề & Gợi ý sửa (${displayComments.length})`,
         widgets: commentWidgets,
-      });
-    }
-
-    if (data.comments.length > 10) {
-      sections.push({
-        widgets: [
-          {
-            textParagraph: {
-              text: `<i>... và còn ${data.comments.length - 10} vấn đề khác.</i>`,
-            },
-          },
-        ],
       });
     }
 

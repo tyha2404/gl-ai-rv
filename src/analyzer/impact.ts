@@ -32,6 +32,46 @@ export function extractModifiedSymbolsFromDiff(rawDiff: string): string[] {
     /(?:export\s+)?let\s+([a-zA-Z0-9_$]+)\s*=/i,
   ];
 
+  const genericKeywords = new Set([
+    "if",
+    "for",
+    "while",
+    "switch",
+    "return",
+    "true",
+    "false",
+    "null",
+    "undefined",
+    "describe",
+    "it",
+    "test",
+    "expect",
+    "beforeEach",
+    "afterEach",
+    "req",
+    "res",
+    "next",
+    "error",
+    "err",
+    "data",
+    "result",
+    "payload",
+    "config",
+    "options",
+    "props",
+    "state",
+    "params",
+    "query",
+    "body",
+    "item",
+    "index",
+    "list",
+    "array",
+    "key",
+    "value",
+    "id",
+  ]);
+
   for (const line of lines) {
     if (!line.startsWith("+") && !line.startsWith("-")) continue;
     if (line.startsWith("+++") || line.startsWith("---")) continue;
@@ -41,19 +81,7 @@ export function extractModifiedSymbolsFromDiff(rawDiff: string): string[] {
       const match = content.match(regex);
       if (match && match[1]) {
         const name = match[1];
-        if (
-          name.length > 2 &&
-          ![
-            "if",
-            "for",
-            "while",
-            "switch",
-            "return",
-            "true",
-            "false",
-            "null",
-          ].includes(name)
-        ) {
+        if (name.length > 2 && !genericKeywords.has(name)) {
           symbols.add(name);
         }
       }

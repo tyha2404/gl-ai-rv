@@ -1,4 +1,5 @@
 export const DEFAULT_IGNORED_PATTERNS = [
+  // Package locks & env
   "package-lock.json",
   "yarn.lock",
   "pnpm-lock.yaml",
@@ -6,13 +7,68 @@ export const DEFAULT_IGNORED_PATTERNS = [
   ".env",
   ".env.",
   ".gitignore",
+  ".gitattributes",
+  ".editorconfig",
+
+  // Build & dependency directories
   "dist/",
   "build/",
+  "out/",
   "node_modules/",
   ".next/",
   ".nuxt/",
   "vendor/",
   ".git/",
+  "coverage/",
+  ".nyc_output/",
+  ".turbo/",
+
+  // Documentation & text files
+  "*.md",
+  "*.txt",
+  "docs/",
+  "LICENSE",
+
+  // Test & mock files (non-business logic)
+  "*.test.ts",
+  "*.test.js",
+  "*.test.tsx",
+  "*.test.jsx",
+  "*.spec.ts",
+  "*.spec.js",
+  "*.spec.tsx",
+  "*.spec.jsx",
+  "__tests__/",
+  "__mocks__/",
+  "tests/",
+  "test/",
+  "fixtures/",
+  "mocks/",
+
+  // Configuration files (non-business logic)
+  "tsconfig*.json",
+  "*.config.js",
+  "*.config.ts",
+  "*.config.cjs",
+  "*.config.mjs",
+  ".eslintrc*",
+  "eslint*",
+  ".prettierrc*",
+  "jest.config.*",
+  "vite.config.*",
+  "webpack.config.*",
+  "babel.config.*",
+  "pm2*",
+  "ecosystem.config.*",
+
+  // Docker & CI/CD
+  "Dockerfile*",
+  "docker-compose*",
+  ".gitlab-ci.yml",
+  ".github/",
+  ".husky/",
+
+  // Static assets & Media
   "*.min.js",
   "*.min.css",
   "*.map",
@@ -27,6 +83,10 @@ export const DEFAULT_IGNORED_PATTERNS = [
   "*.woff2",
   "*.ttf",
   "*.eot",
+  "*.mp4",
+  "*.webp",
+  "*.csv",
+  "*.xlsx",
 ];
 
 export interface GitLabDiffItem {
@@ -59,12 +119,26 @@ export function isIgnoredFile(
   customPatterns: string[] = [],
 ): boolean {
   const allPatterns = [...DEFAULT_IGNORED_PATTERNS, ...customPatterns];
+  const normalizedPath = filePath.replace(/\\/g, "/");
+
   return allPatterns.some((pattern) => {
     if (pattern.startsWith("*.")) {
       const ext = pattern.slice(1);
-      return filePath.endsWith(ext);
+      return normalizedPath.endsWith(ext);
     }
-    return filePath.includes(pattern);
+    if (pattern.endsWith("/")) {
+      const dirName = pattern.slice(0, -1);
+      return (
+        normalizedPath.startsWith(pattern) ||
+        normalizedPath.includes(`/${pattern}`) ||
+        normalizedPath.startsWith(dirName) ||
+        normalizedPath.split("/").includes(dirName)
+      );
+    }
+    return (
+      normalizedPath.includes(pattern) ||
+      normalizedPath.split("/").pop() === pattern
+    );
   });
 }
 

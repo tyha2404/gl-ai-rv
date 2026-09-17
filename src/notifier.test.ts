@@ -96,7 +96,7 @@ describe('GoogleChatNotifier', () => {
     assert.strictEqual(body.cardsV2[0].card.sections[0].widgets[0].decoratedText.text, '<b>backend-service</b>');
     assert.strictEqual(body.cardsV2[0].card.sections[0].widgets[2].decoratedText.text, payload.author);
     assert.ok(body.cardsV2[0].card.sections[1].widgets[0].decoratedText.text.includes('REQUEST CHANGES'));
-    assert.strictEqual(body.cardsV2[0].card.sections[2].header, '🔍 Chi tiết vấn đề & Gợi ý sửa');
+    assert.strictEqual(body.cardsV2[0].card.sections[2].header, '🔍 Chi tiết vấn đề & Gợi ý sửa (1)');
   });
 
   it('should escape HTML characters and format markdown-like syntax', async () => {
