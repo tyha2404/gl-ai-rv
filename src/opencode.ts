@@ -230,14 +230,10 @@ NHIỆM VỤ CỦA BẠN:
         env: {
           ...process.env,
           CI: "true",
-          TERM: "dumb",
           NO_COLOR: "1",
         },
-        stdio: ["pipe", "pipe", "pipe"],
+        stdio: ["ignore", "pipe", "pipe"],
       });
-
-      // Explicitly close stdin to prevent CLI from waiting for user input
-      child.stdin?.end();
 
       const timer = setTimeout(() => {
         if (!isFinished) {

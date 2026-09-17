@@ -139,8 +139,16 @@ async function handleAIReview(
       }
     }
 
-    // Fallback sang AIClient (Unified / Multi-agent) nếu OpenCode không chạy hoặc gặp lỗi
-    if (!reviewResult) {
+    // Fallback sang AIClient (Unified / Multi-agent) nếu OpenCode không chạy, gặp lỗi, hoặc bị ngắt quãng giữa chừng
+    const isOpenCodeIncomplete =
+      reviewResult &&
+      reviewResult.comments.length === 0 &&
+      reviewResult.verdict === "COMMENT" &&
+      (reviewResult.summary.includes("Let me") ||
+        reviewResult.summary.includes("Đã chạy OpenCode review xong") ||
+        !reviewResult.summary.includes("đạt"));
+
+    if (!reviewResult || isOpenCodeIncomplete) {
       console.log(
         `[AIReview] Running review via AIClient for MR #${iid} (${validDiffs.length} files, ${commits.length} commits)...`,
       );
