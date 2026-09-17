@@ -184,7 +184,10 @@ NHIỆM VỤ CỦA BẠN:
 
       // Prepare CLI arguments
       const args = ["run", prompt];
-      const model = (process.env.OPENCODE_MODEL || "Big Pickle").trim();
+      let model = (process.env.OPENCODE_MODEL || "opencode/big-pickle").trim();
+      if (model.toLowerCase() === "big pickle" || model.toLowerCase() === "big-pickle") {
+        model = "opencode/big-pickle";
+      }
       if (model) {
         args.push("-m", model);
       }
