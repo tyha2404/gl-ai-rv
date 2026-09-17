@@ -184,9 +184,9 @@ NHIỆM VỤ CỦA BẠN:
 
       // Prepare CLI arguments
       const args = ["run", prompt];
-      const model = process.env.OPENCODE_MODEL;
-      if (model && model.trim()) {
-        args.push("-m", model.trim());
+      const model = (process.env.OPENCODE_MODEL || "Big Pickle").trim();
+      if (model) {
+        args.push("-m", model);
       }
 
       // Spawn opencode process
