@@ -18,6 +18,13 @@ export class GitLabClient {
     mergeRequestIid: number,
   ) {
     try {
+      if (typeof this.api.MergeRequests.allDiffs === "function") {
+        const diffs = await this.api.MergeRequests.allDiffs(
+          projectId,
+          mergeRequestIid,
+        );
+        return diffs || [];
+      }
       const response = await this.api.MergeRequests.showChanges(
         projectId,
         mergeRequestIid,
@@ -25,13 +32,11 @@ export class GitLabClient {
       return response.changes || response || [];
     } catch (err1: any) {
       try {
-        if (typeof this.api.MergeRequests.allDiffs === "function") {
-          const diffs = await this.api.MergeRequests.allDiffs(
-            projectId,
-            mergeRequestIid,
-          );
-          return diffs || [];
-        }
+        const response = await this.api.MergeRequests.showChanges(
+          projectId,
+          mergeRequestIid,
+        );
+        return response.changes || response || [];
       } catch (err2: any) {
         console.error(
           `[GitLabClient] Error fetching MR diffs for MR #${mergeRequestIid}:`,
