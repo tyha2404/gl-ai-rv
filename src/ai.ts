@@ -146,9 +146,9 @@ HỘI ĐỒNG KỸ SƯ HÃY ĐÁNH GIÁ CÁC THAY ĐỔI THEO 4 LĂNG KÍNH:
 3. ⚡ HIỆU NĂNG (Category: "PERFORMANCE"): N+1 query, truy vấn DB trong loop, memory leak, blocking sync operations.
 4. 🏛️ KIẾN TRÚC & CLEAN CODE (Category: "CLEAN_CODE"): Vi phạm SOLID/DRY, lạm dụng 'any' trong TypeScript, code smells nặng.
 
-YÊU CẦU ĐỊNH DẠNG JSON TRẢ VỀ:
+YÊU CẦU ĐỊNH DẠNG JSON TRẢ VỀ (BẮT BUỘC 100% BẰNG TIẾNG VIỆT):
 {
-  "summary": "Tóm tắt súc tích (2-3 câu) bằng Tiếng Việt về chất lượng tổng quan của MR, rủi ro chính và kết luận.",
+  "summary": "Tóm tắt súc tích (2-3 câu) HOÀN TOÀN bằng Tiếng Việt về chất lượng tổng quan của MR, rủi ro chính và kết luận.",
   "verdict": "APPROVE" | "REQUEST_CHANGES" | "COMMENT",
   "riskLevel": "LOW" | "MEDIUM" | "HIGH",
   "comments": [
@@ -157,8 +157,8 @@ YÊU CẦU ĐỊNH DẠNG JSON TRẢ VỀ:
       "line": 42,
       "severity": "CRITICAL" | "WARNING" | "SUGGESTION",
       "category": "SECURITY" | "BUG" | "PERFORMANCE" | "CLEAN_CODE",
-      "text": "Mô tả ngắn gọn nguyên nhân và rủi ro.",
-      "suggestion": "Đoạn code sửa đổi cụ thể để thay thế dòng/đoạn code bị lỗi"
+      "text": "Mô tả ngắn gọn nguyên nhân và rủi ro HOÀN TOÀN bằng Tiếng Việt.",
+      "suggestion": "Đoạn code sửa đổi cụ thể (kèm giải thích bằng Tiếng Việt nếu cần)"
     }
   ]
 }
@@ -185,7 +185,7 @@ ${combinedDiffText}
         });
       });
 
-      const raw = response.choices[0]?.message?.content || "{}";
+      const raw = response?.choices?.[0]?.message?.content || "{}";
       const clean = this.cleanJsonResponse(raw);
       const parsed = JSON.parse(clean);
 

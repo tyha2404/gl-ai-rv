@@ -41,8 +41,13 @@ export class OpenCodeRunner {
         : "Không có commit log";
 
     return `
-Bạn là AI Senior Code Reviewer & Software Architect. Bạn đang ở trong thư mục codebase của dự án '${options.repoName}'.
-Hãy đọc ngữ cảnh toàn bộ repository và thực hiện review chi tiết các thay đổi của Merge Request.
+Bạn là AI Senior Code Reviewer. Bạn đang ở trong repository '${options.repoName}'.
+NHIỆM VỤ CỦA BẠN: Phân tích và review các thay đổi trong Merge Request dưới đây.
+
+QUY TẮC QUAN TRỌNG:
+- NGÔN NGỮ: BẮT BUỘC trả về nội dung review (tóm tắt summary, mô tả lỗi trong text, giải thích gợi ý trong suggestion) 100% BẰNG TIẾNG VIỆT. Tuyệt đối không dùng tiếng Anh cho nội dung nhận xét.
+- PHẠM VI (SCOPE): CHỈ tập trung vào các file và đoạn code được thay đổi trong DIFF và các caller liên quan trực tiếp. KHÔNG quét lan man toàn bộ cấu trúc dự án.
+- ĐỊNH DẠNG: BẮT BUỘC TRẢ VỀ DUY NHẤT 1 KHỐI JSON THEO SCHEMA. KHÔNG in ra lời dẫn, suy nghĩ (thinking), hay văn bản tự do.
 
 THÔNG TIN MERGE REQUEST:
 - Tiêu đề: ${options.title}
@@ -58,18 +63,16 @@ ${options.impactSummary ? `GHI CHÚ VỀ PHẠM VI ẢNH HƯỞNG (CALLERS SCAN)
 DIFF CỦA CÁC THAY ĐỔI:
 ${options.rawDiff || "(Xem git diff trực tiếp trong repository)"}
 
-NHIỆM VỤ CỦA BẠN:
-1. Đọc các file bị thay đổi và ngữ cảnh các file gọi/liên quan trong repository.
-2. Kiểm tra:
-   - 🚨 Bug & Logic: Null/undefined pointer, race conditions, edge-case bugs.
-   - 🔒 Bảo mật (Security): Injection, leak secret, thiếu validation.
-   - ⚡ Hiệu năng (Performance): N+1 query, blocking operations, memory leak.
-   - 🏛️ Clean Code: SOLID/DRY, type safety.
-   - 💥 Phân tích ảnh hưởng: Kiểm tra xem các nơi gọi hàm/class bị sửa đổi có bị hỏng (breaking changes) không.
-3. BẮT BUỘC TRẢ VỀ DUY NHẤT 1 KHỐI JSON THEO SCHEMA SAU:
+TIÊU CHÍ REVIEW:
+1. 🚨 Bug & Logic: Null/undefined pointer, race conditions, edge-cases.
+2. 🔒 Bảo mật: Injection, leak secrets/tokens, thiếu validation.
+3. ⚡ Hiệu năng: N+1 query, blocking calls, rò rỉ bộ nhớ.
+4. 💥 Breaking changes: Phá vỡ signature các hàm/class đang được gọi.
+
+ĐỊNH DẠNG ĐẦU RA BẮT BUỘC (DUY NHẤT 1 KHỐI JSON THEO SCHEMA):
 \`\`\`json
 {
-  "summary": "Tóm tắt (2-3 câu) bằng Tiếng Việt về chất lượng MR và phạm vi ảnh hưởng",
+  "summary": "Tóm tắt (2-3 câu) HOÀN TOÀN bằng Tiếng Việt về chất lượng MR và điểm cần chú ý",
   "verdict": "APPROVE" | "REQUEST_CHANGES" | "COMMENT",
   "riskLevel": "LOW" | "MEDIUM" | "HIGH",
   "comments": [
@@ -78,8 +81,8 @@ NHIỆM VỤ CỦA BẠN:
       "line": 42,
       "severity": "CRITICAL" | "WARNING" | "SUGGESTION",
       "category": "SECURITY" | "BUG" | "PERFORMANCE" | "CLEAN_CODE",
-      "text": "Mô tả vấn đề và rủi ro",
-      "suggestion": "Code gợi ý sửa đổi"
+      "text": "Mô tả vấn đề và rủi ro HOÀN TOÀN bằng Tiếng Việt",
+      "suggestion": "Code gợi ý sửa đổi (kèm giải thích bằng Tiếng Việt nếu cần)"
     }
   ]
 }
@@ -196,7 +199,7 @@ NHIỆM VỤ CỦA BẠN:
     const timeoutMs =
       options.timeoutMs ||
       Number(process.env.OPENCODE_TIMEOUT_MS) ||
-      5 * 60 * 1000;
+      15 * 60 * 1000;
 
     console.log(
       `[OpenCodeRunner] Starting OpenCode CLI in ${options.repoPath}...`,
