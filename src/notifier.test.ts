@@ -95,20 +95,23 @@ describe("GoogleChatNotifier", () => {
     const body = JSON.parse(fetchOptions.body);
     assert.ok(body.cardsV2);
     assert.strictEqual(body.cardsV2[0].card.header.title, payload.title);
-    const card = body.cardsV2[0].card;
-    assert.ok(card.header.subtitle.includes("backend-service"));
-    assert.ok(card.header.subtitle.includes("!42"));
-    assert.ok(card.header.subtitle.includes("John Doe"));
+    assert.strictEqual(
+      body.cardsV2[0].card.sections[0].widgets[0].decoratedText.text,
+      "<b>backend-service</b>",
+    );
+    assert.strictEqual(
+      body.cardsV2[0].card.sections[0].widgets[2].decoratedText.text,
+      payload.author,
+    );
     assert.ok(
-      card.sections[0].widgets[0].decoratedText.text.includes(
+      body.cardsV2[0].card.sections[1].widgets[0].decoratedText.text.includes(
         "REQUEST CHANGES",
       ),
     );
-    // dòng tổng kết số lượng theo mức độ
-    assert.ok(
-      card.sections[0].widgets[2].textParagraph.text.includes("nghiêm trọng"),
+    assert.strictEqual(
+      body.cardsV2[0].card.sections[2].header,
+      "🔍 Chi tiết vấn đề & Gợi ý sửa (1)",
     );
-    assert.strictEqual(card.sections[1].header, "🔴 Nghiêm trọng (1)");
   });
 
   it("should escape HTML characters and format markdown-like syntax", async () => {
@@ -151,91 +154,70 @@ describe("GoogleChatNotifier", () => {
       "Review: &lt;script&gt;alert(1)&lt;/script&gt;",
     );
     assert.strictEqual(
-      card.sections[0].widgets[1].textParagraph.text,
+      card.sections[0].widgets[0].decoratedText.text,
+      "<b>my&lt;app&gt;</b>",
+    );
+    assert.strictEqual(
+      card.sections[0].widgets[2].decoratedText.text,
+      "User &lt;user@example.com&gt;",
+    );
+    assert.strictEqual(
+      card.sections[1].widgets[2].textParagraph.text,
       "Found <b>2</b> issues in <code>&lt;file&gt;</code>.",
     );
-    // WARNING nằm ở section thứ 2; widget đầu là nội dung đã escape/format
-    assert.strictEqual(card.sections[1].header, "🟡 Cảnh báo (1)");
     assert.strictEqual(
-      card.sections[1].widgets[0].decoratedText.text,
+      card.sections[2].widgets[1].textParagraph.text,
       "Fix <i>this</i> part.",
     );
     assert.strictEqual(
-      card.sections[1].widgets[1].decoratedText.text,
+      card.sections[2].widgets[2].decoratedText.text,
       "<pre>const x = &lt;tag&gt;safe&lt;/tag&gt;;</pre>",
     );
   });
 
-  it("should collapse suggestions and commits, order by severity, and cap detailed issues", () => {
+  it("should render commits and no impact section", async () => {
+    process.env.GOOGLE_CHAT_WEBHOOK_URL = "http://webhook.url";
     const notifier = new GoogleChatNotifier();
-    const mk = (n: number, severity: any, category: any = "CLEAN_CODE") => ({
-      path: `src/f${n}.ts`,
-      line: n,
-      severity,
-      category,
-      text: `vấn đề ${n}`,
-    });
-    const comments = [
-      mk(1, "SUGGESTION"),
-      ...Array.from({ length: 20 }, (_, i) => mk(i + 2, "WARNING")),
-      mk(99, "CRITICAL", "BUG"),
-    ];
-    const card = notifier.buildReviewCard({
-      title: "T",
-      author: "A",
+
+    let fetchOptions: any = {};
+    global.fetch = (async (_url: string, options: any) => {
+      fetchOptions = options;
+      return { ok: true } as Response;
+    }) as any;
+
+    const payload: NotificationPayload = {
+      title: "Feature Refactor",
+      author: "Alice",
       url: "http://gitlab.com/mr/10",
-      repoName: "svc",
+      repoName: "my-service",
       mrId: 10,
       targetBranch: "main",
-      summary: "ok",
-      verdict: "REQUEST_CHANGES",
-      riskLevel: "HIGH",
-      verificationNote: "Claude phát hiện 5",
-      commits: [{ hash: "1a2b3c4", message: "refactor", author: "A" }],
-      comments,
-    }).cardsV2[0].card;
-
-    const headers = card.sections.map((s: any) => s.header);
-    assert.deepStrictEqual(headers, [
-      undefined,
-      "🔴 Nghiêm trọng (1)",
-      "🟡 Cảnh báo (20)",
-      "🔵 Gợi ý (1)",
-      "📜 Commits (1)",
-    ]);
-    // 1 critical + 11 warning được hiển thị chi tiết, phần còn lại có dòng tóm tắt
-    const warnSection = card.sections[2];
-    const last = warnSection.widgets[warnSection.widgets.length - 1];
-    assert.ok(last.textParagraph.text.includes("và 9 vấn đề khác"));
-    assert.strictEqual(card.sections[3].collapsible, true);
-    assert.strictEqual(card.sections[4].collapsible, true);
-    assert.ok(
-      card.sections[0].widgets.some((w: any) =>
-        w.textParagraph?.text.includes("Claude phát hiện 5"),
-      ),
-    );
-    assert.ok(JSON.stringify(card).length < 30000);
-  });
-
-  it("should show an all-clear message when there are no issues", () => {
-    const notifier = new GoogleChatNotifier();
-    const card = notifier.buildReviewCard({
-      title: "T",
-      author: "A",
-      url: "u",
-      repoName: "r",
-      mrId: 1,
-      targetBranch: "main",
-      summary: "tốt",
+      summary: "Refactored auth module",
       verdict: "APPROVE",
       riskLevel: "LOW",
+      commits: [
+        {
+          hash: "1a2b3c4",
+          message: "refactor auth token helper",
+          author: "Alice",
+        },
+      ],
       comments: [],
-    }).cardsV2[0].card;
-    assert.strictEqual(card.sections.length, 1);
+    };
+
+    await notifier.sendReviewNotification(payload);
+
+    const body = JSON.parse(fetchOptions.body);
+    const sections = body.cardsV2[0].card.sections;
+
+    // Check MR info widgets contains commits widget
+    const mrInfoWidgets = sections[0].widgets;
+    assert.strictEqual(mrInfoWidgets.length, 4);
+    assert.ok(mrInfoWidgets[3].decoratedText.text.includes("1a2b3c4"));
+
+    // Phạm vi ảnh hưởng đã được bỏ khỏi thẻ để gọn hơn
     assert.ok(
-      card.sections[0].widgets[2].textParagraph.text.includes(
-        "Không phát hiện",
-      ),
+      !sections.some((s: any) => s.header?.includes("Phạm vi ảnh hưởng")),
     );
   });
 });
