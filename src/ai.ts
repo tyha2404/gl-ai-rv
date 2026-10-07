@@ -3,7 +3,11 @@ import OpenAI from "openai";
 import { ImpactAnalysisReport } from "./analyzer/impact";
 import { loadProjectRules } from "./config/rules";
 import {
+  buildContextSection,
+  buildReviewOutputSchema,
+  buildRoleOutputSchema,
   LEAD_CONSOLIDATOR_PROMPT,
+  REVIEW_CRITERIA,
   REVIEW_ROLES,
   UNIFIED_MULTI_ROLE_PROMPT,
 } from "./roles/prompts";
@@ -25,6 +29,8 @@ export interface AIReviewComment {
   category: Category;
   text: string;
   suggestion?: string | undefined;
+  /** Đoạn code trích nguyên văn làm bằng chứng; dùng để lọc finding bịa đặt. */
+  evidence?: string | undefined;
 }
 
 export interface AIReviewResult {
@@ -128,8 +134,6 @@ export class AIClient {
   private async reviewCodeUnified(
     batches: DiffBatch[],
     contextSection: string,
-    customRulesSection: string,
-    techStackSection: string,
   ): Promise<AIReviewResult> {
     const combinedDiffText = batches
       .map((b) => b.formattedDiffText)
@@ -137,36 +141,10 @@ export class AIClient {
 
     const prompt = `
 ${contextSection}
-${techStackSection}
-${customRulesSection}
 
-HỘI ĐỒNG KỸ SƯ HÃY ĐÁNH GIÁ CÁC THAY ĐỔI THEO 4 LĂNG KÍNH:
-1. 🚨 BUG & LOGIC (Category: "BUG"): Null/Undefined pointer, NaN, Off-by-one, race condition, unhandled async errors.
-2. 🔒 BẢO MẬT (Category: "SECURITY"): SQL/NoSQL Injection, XSS, SSRF, hardcoded secrets/tokens, thiếu validation đầu vào.
-3. ⚡ HIỆU NĂNG (Category: "PERFORMANCE"): N+1 query, truy vấn DB trong loop, memory leak, blocking sync operations.
-4. 🏛️ KIẾN TRÚC & CLEAN CODE (Category: "CLEAN_CODE"): Vi phạm SOLID/DRY, lạm dụng 'any' trong TypeScript, code smells nặng.
+${REVIEW_CRITERIA}
 
-YÊU CẦU ĐỊNH DẠNG JSON TRẢ VỀ (BẮT BUỘC 100% BẰNG TIẾNG VIỆT):
-{
-  "summary": "Tóm tắt súc tích (2-3 câu) HOÀN TOÀN bằng Tiếng Việt về chất lượng tổng quan của MR, rủi ro chính và kết luận.",
-  "verdict": "APPROVE" | "REQUEST_CHANGES" | "COMMENT",
-  "riskLevel": "LOW" | "MEDIUM" | "HIGH",
-  "comments": [
-    {
-      "path": "đường_dẫn_file",
-      "line": 42,
-      "severity": "CRITICAL" | "WARNING" | "SUGGESTION",
-      "category": "SECURITY" | "BUG" | "PERFORMANCE" | "CLEAN_CODE",
-      "text": "Mô tả ngắn gọn nguyên nhân và rủi ro HOÀN TOÀN bằng Tiếng Việt.",
-      "suggestion": "Đoạn code sửa đổi cụ thể (kèm giải thích bằng Tiếng Việt nếu cần)"
-    }
-  ]
-}
-
-Quy ước:
-- Nếu có lỗi CRITICAL hoặc rủi ro bảo mật cao: verdict = "REQUEST_CHANGES", riskLevel = "HIGH".
-- Nếu có cảnh báo WARNING hoặc SUGGESTION đáng chú ý: verdict = "COMMENT", riskLevel = "MEDIUM".
-- Nếu code tốt, không có vấn đề gì: verdict = "APPROVE", riskLevel = "LOW", comments = [].
+${buildReviewOutputSchema()}
 
 DIFF CẦN REVIEW:
 ${combinedDiffText}
@@ -208,6 +186,7 @@ ${combinedDiffText}
               : "BUG") as Category,
             text: String(c.text || ""),
             suggestion: c.suggestion ? String(c.suggestion) : undefined,
+            evidence: c.evidence ? String(c.evidence) : undefined,
           }))
         : [];
 
@@ -237,8 +216,6 @@ ${combinedDiffText}
   private async reviewCodeMultiAgent(
     batches: DiffBatch[],
     contextSection: string,
-    customRulesSection: string,
-    techStackSection: string,
   ): Promise<AIReviewResult> {
     const allRoleOutputs: RoleReviewOutput[] = [];
 
@@ -246,8 +223,6 @@ ${combinedDiffText}
       for (const role of REVIEW_ROLES) {
         const prompt = `
 ${contextSection}
-${techStackSection}
-${customRulesSection}
 
 [DIFF CẦN REVIEW - BATCH ${batch.batchIndex}/${batch.totalBatches}]:
 ${batch.formattedDiffText}
@@ -255,23 +230,8 @@ ${batch.formattedDiffText}
 HƯỚNG DẪN REVIEW:
 - Đóng đúng vai trò: ${role.name}.
 - Chỉ tìm các vấn đề thuộc nhóm Category: "${role.category}".
-- Chỉ comment khi chắc chắn có vấn đề xác thực (Zero False Positives).
-- Nếu không có vấn đề gì thuộc chuyên môn của bạn, hãy trả về danh sách rỗng: "comments": [].
 
-BẮT BUỘC TRẢ VỀ JSON THEO SCHEMA:
-{
-  "analysis": "Đánh giá nhanh khía cạnh ${role.category}",
-  "comments": [
-    {
-      "path": "đường_dẫn_file",
-      "line": 42,
-      "severity": "CRITICAL" | "WARNING" | "SUGGESTION",
-      "category": "${role.category}",
-      "text": "Mô tả vấn đề ngắn gọn, giải thích rủi ro",
-      "suggestion": "Đoạn code sửa đổi cụ thể nếu có"
-    }
-  ]
-}
+${buildRoleOutputSchema(role.category)}
 `.trim();
 
         try {
@@ -305,6 +265,7 @@ BẮT BUỘC TRẢ VỀ JSON THEO SCHEMA:
                 category: role.category,
                 text: String(c.text || ""),
                 suggestion: c.suggestion ? String(c.suggestion) : undefined,
+                evidence: c.evidence ? String(c.evidence) : undefined,
               }))
             : [];
 
@@ -341,8 +302,6 @@ BẮT BUỘC TRẢ VỀ JSON THEO SCHEMA:
 
     const consolidatorPrompt = `
 ${contextSection}
-${techStackSection}
-${customRulesSection}
 
 KẾT QUẢ THÔ TỪ CÁC CHUYÊN GIA REVIEW:
 ${JSON.stringify(allRoleOutputs, null, 2)}
@@ -355,22 +314,7 @@ NHIỆM VỤ CỦA LEAD REVIEWER:
 2. Khử trùng lặp (Deduplicate): Nếu cùng 1 file và line bị nhiều chuyên gia nhắc đến, gộp lại thành 1 comment hoàn chỉnh với mức severity cao nhất.
 3. Đánh giá tổng quan: Viết summary (2-3 câu tiếng Việt súc tích), chọn verdict và riskLevel phù hợp.
 
-BẮT BUỘC TRẢ VỀ ĐÚNG SCHEMA JSON:
-{
-  "summary": "Tóm tắt đánh giá chất lượng tổng quan của MR",
-  "verdict": "APPROVE" | "REQUEST_CHANGES" | "COMMENT",
-  "riskLevel": "LOW" | "MEDIUM" | "HIGH",
-  "comments": [
-    {
-      "path": "đường_dẫn_file",
-      "line": 42,
-      "severity": "CRITICAL" | "WARNING" | "SUGGESTION",
-      "category": "SECURITY" | "PERFORMANCE" | "CLEAN_CODE" | "BUG",
-      "text": "Mô tả nguyên nhân & rủi ro rõ ràng",
-      "suggestion": "Đoạn code sửa đổi cụ thể"
-    }
-  ]
-}
+${buildReviewOutputSchema()}
 `.trim();
 
     try {
@@ -411,6 +355,7 @@ BẮT BUỘC TRẢ VỀ ĐÚNG SCHEMA JSON:
               : "BUG") as Category,
             text: String(c.text || ""),
             suggestion: c.suggestion ? String(c.suggestion) : undefined,
+            evidence: c.evidence ? String(c.evidence) : undefined,
           }))
         : allRawComments;
 
@@ -477,55 +422,28 @@ BẮT BUỘC TRẢ VỀ ĐÚNG SCHEMA JSON:
       };
     }
 
-    const commitsSection =
-      mrContext?.commits && mrContext.commits.length > 0
-        ? `\nDANH SÁCH COMMITS MỚI TRONG MR:\n${mrContext.commits.map((c) => `- [${c.hash}] ${c.message} (${c.author})`).join("\n")}`
-        : "";
-
-    const impactSection = mrContext?.impactReport
-      ? `\nPHẠM VI ẢNH HƯỞNG (IMPACT ANALYSIS / CALLERS SCAN):\n- Tóm tắt: ${mrContext.impactReport.summary}\n${mrContext.impactReport.impactedFiles.length > 0 ? `- Các file phụ thuộc cần lưu ý (${mrContext.impactReport.impactedFiles.length} files): ${mrContext.impactReport.impactedFiles.slice(0, 10).join(", ")}` : ""}`
-      : "";
-
-    const contextSection = mrContext
-      ? `
-THÔNG TIN MERGE REQUEST:
-- Tiêu đề: ${mrContext.title}
-- Tác giả: ${mrContext.author}
-- Repository: ${mrContext.repoName}
-- Target Branch: ${mrContext.targetBranch}
-${mrContext.description ? `- Mô tả: ${mrContext.description}` : ""}${commitsSection}${impactSection}
-`.trim()
-      : "";
-
-    const techStack = mrContext?.techStack || extractTechStackSummary();
-    const techStackSection = techStack
-      ? `\nNGỮ CẢNH CÔNG NGHỆ (TECH STACK):\n${techStack}\n`
-      : "";
-
-    const customRules = mrContext?.customRules || loadProjectRules();
-    const customRulesSection = customRules
-      ? `\nQUY TẮC BẮT BUỘC CỦA DỰ ÁN (PROJECT RULES):\n${customRules}\n`
-      : "";
+    const contextSection = buildContextSection({
+      title: mrContext?.title ?? "(không rõ)",
+      author: mrContext?.author ?? "(không rõ)",
+      repoName: mrContext?.repoName ?? "(không rõ)",
+      targetBranch: mrContext?.targetBranch ?? "(không rõ)",
+      description: mrContext?.description,
+      commits: mrContext?.commits,
+      impactSummary: mrContext?.impactReport?.summary,
+      impactedFiles: mrContext?.impactReport?.impactedFiles,
+      techStack: mrContext?.techStack || extractTechStackSummary(),
+      projectRules: mrContext?.customRules || loadProjectRules(),
+    });
 
     console.log(
       `[AIReview] Starting review using strategy '${this.strategy}' (${batches.length} diff batches)...`,
     );
 
     if (this.strategy === "multi_agent") {
-      return await this.reviewCodeMultiAgent(
-        batches,
-        contextSection,
-        customRulesSection,
-        techStackSection,
-      );
+      return await this.reviewCodeMultiAgent(batches, contextSection);
     }
 
     // Default: 'unified' (1 request for 1 RPM & Model Free safety)
-    return await this.reviewCodeUnified(
-      batches,
-      contextSection,
-      customRulesSection,
-      techStackSection,
-    );
+    return await this.reviewCodeUnified(batches, contextSection);
   }
 }

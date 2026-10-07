@@ -18,7 +18,9 @@ describe("OpenCodeRunner", () => {
     assert.ok(prompt.includes("Fix auth token leak"));
     assert.ok(prompt.includes("Alice"));
     assert.ok(prompt.includes("1234567"));
-    assert.ok(prompt.includes("SCHEMA"));
+    assert.ok(
+      prompt.includes("ĐỊNH DẠNG ĐẦU RA") && prompt.includes("evidence"),
+    );
   });
 
   test("should parse json output from opencode stdout", () => {

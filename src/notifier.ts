@@ -15,6 +15,7 @@ export interface NotificationPayload {
   comments: AIReviewComment[];
   commits?: GitCommitInfo[] | undefined;
   impactReport?: ImpactAnalysisReport | undefined;
+  verificationNote?: string | undefined;
 }
 
 export class GoogleChatNotifier {
@@ -162,6 +163,15 @@ export class GoogleChatNotifier {
               startIcon: { knownIcon: "TICKET" },
             },
           },
+          ...(data.verificationNote
+            ? [
+                {
+                  textParagraph: {
+                    text: `🔎 ${this.escapeHtml(data.verificationNote)}`,
+                  },
+                },
+              ]
+            : []),
         ],
       },
     ];
@@ -290,6 +300,70 @@ export class GoogleChatNotifier {
       }
     } catch (error) {
       console.error("Failed to send Google Chat notification:", error);
+    }
+  }
+
+  /** Báo khi review KHÔNG chạy được, để không nhầm với "code tốt". */
+  async sendFailureNotification(data: {
+    title: string;
+    url: string;
+    repoName: string;
+    mrId: number;
+    error: string;
+  }): Promise<void> {
+    if (!this.webhookUrl) {
+      console.warn(
+        "GOOGLE_CHAT_WEBHOOK_URL is not defined. Skipping failure notification.",
+      );
+      return;
+    }
+
+    const card = {
+      cardsV2: [
+        {
+          cardId: "review-failure",
+          card: {
+            header: {
+              title: this.escapeHtml(data.title),
+              subtitle: "⚠️ AI Review KHÔNG chạy được - cần review thủ công",
+            },
+            sections: [
+              {
+                widgets: [
+                  {
+                    textParagraph: {
+                      text: `<b>${this.escapeHtml(data.repoName)}</b> MR #${data.mrId}<br>Lỗi: <code>${this.escapeHtml(data.error.slice(0, 500))}</code>`,
+                    },
+                  },
+                  {
+                    buttonList: {
+                      buttons: [
+                        {
+                          text: "Xem trên GitLab",
+                          onClick: { openLink: { url: data.url } },
+                        },
+                      ],
+                    },
+                  },
+                ],
+              },
+            ],
+          },
+        },
+      ],
+    };
+
+    try {
+      const response = await fetch(this.webhookUrl, {
+        method: "POST",
+        headers: { "Content-Type": "application/json; charset=UTF-8" },
+        body: JSON.stringify(card),
+      });
+      if (!response.ok) {
+        throw new Error(`Google Chat API error: ${response.statusText}`);
+      }
+    } catch (error) {
+      console.error("Failed to send Google Chat failure notification:", error);
     }
   }
 }

@@ -119,7 +119,7 @@ describe("GoogleChatNotifier", () => {
     const notifier = new GoogleChatNotifier();
 
     let fetchOptions: any = {};
-    global.fetch = (async (url: string, options: any) => {
+    global.fetch = (async (_url: string, options: any) => {
       fetchOptions = options;
       return { ok: true } as Response;
     }) as any;
@@ -180,7 +180,7 @@ describe("GoogleChatNotifier", () => {
     const notifier = new GoogleChatNotifier();
 
     let fetchOptions: any = {};
-    global.fetch = (async (url: string, options: any) => {
+    global.fetch = (async (_url: string, options: any) => {
       fetchOptions = options;
       return { ok: true } as Response;
     }) as any;

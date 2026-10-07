@@ -1,6 +1,12 @@
-import { execFile, spawn } from "node:child_process";
+import { spawn } from "node:child_process";
 import { AIReviewComment, AIReviewResult } from "./ai";
 import { ImpactAnalysisReport } from "./analyzer/impact";
+import {
+  buildContextSection,
+  buildReviewOutputSchema,
+  REVIEW_CRITERIA,
+  SHARED_REVIEW_RULES,
+} from "./roles/prompts";
 import { GitCommitInfo } from "./workspace";
 
 export interface OpenCodeReviewOptions {
@@ -32,61 +38,35 @@ export class OpenCodeRunner {
     commits?: GitCommitInfo[] | undefined;
     rawDiff?: string | undefined;
     impactSummary?: string | undefined;
+    impactedFiles?: string[] | undefined;
   }): string {
-    const commitsText =
-      options.commits && options.commits.length > 0
-        ? options.commits
-            .map((c) => `- [${c.hash}] ${c.message} (${c.author})`)
-            .join("\n")
-        : "Không có commit log";
+    const context = buildContextSection({
+      title: options.title,
+      author: options.author,
+      repoName: options.repoName,
+      targetBranch: options.targetBranch,
+      description: options.description,
+      commits: options.commits,
+      impactSummary: options.impactSummary,
+      impactedFiles: options.impactedFiles,
+    });
 
     return `
-Bạn là AI Senior Code Reviewer. Bạn đang ở trong repository '${options.repoName}'.
-NHIỆM VỤ CỦA BẠN: Phân tích và review các thay đổi trong Merge Request dưới đây.
+Bạn là Senior Code Reviewer. Bạn đang ở trong repository '${options.repoName}'.
+NHIỆM VỤ: review các thay đổi trong Merge Request dưới đây.
+PHẠM VI: chỉ tập trung vào các file/đoạn code thay đổi trong DIFF và các caller liên quan trực tiếp; không quét lan man toàn bộ dự án.
+ĐỊNH DẠNG: chỉ trả về duy nhất 1 khối JSON theo schema, không in lời dẫn hay suy nghĩ.
 
-QUY TẮC QUAN TRỌNG:
-- NGÔN NGỮ: BẮT BUỘC trả về nội dung review (tóm tắt summary, mô tả lỗi trong text, giải thích gợi ý trong suggestion) 100% BẰNG TIẾNG VIỆT. Tuyệt đối không dùng tiếng Anh cho nội dung nhận xét.
-- PHẠM VI (SCOPE): CHỈ tập trung vào các file và đoạn code được thay đổi trong DIFF và các caller liên quan trực tiếp. KHÔNG quét lan man toàn bộ cấu trúc dự án.
-- ĐỊNH DẠNG: BẮT BUỘC TRẢ VỀ DUY NHẤT 1 KHỐI JSON THEO SCHEMA. KHÔNG in ra lời dẫn, suy nghĩ (thinking), hay văn bản tự do.
+${SHARED_REVIEW_RULES}
 
-THÔNG TIN MERGE REQUEST:
-- Tiêu đề: ${options.title}
-- Tác giả: ${options.author}
-- Nhánh đích (Target Branch): ${options.targetBranch}
-${options.description ? `- Mô tả: ${options.description}` : ""}
+${REVIEW_CRITERIA}
 
-DANH SÁCH COMMITS MỚI:
-${commitsText}
-
-${options.impactSummary ? `GHI CHÚ VỀ PHẠM VI ẢNH HƯỞNG (CALLERS SCAN):\n${options.impactSummary}\n` : ""}
+${context}
 
 DIFF CỦA CÁC THAY ĐỔI:
 ${options.rawDiff || "(Xem git diff trực tiếp trong repository)"}
 
-TIÊU CHÍ REVIEW:
-1. 🚨 Bug & Logic: Null/undefined pointer, race conditions, edge-cases.
-2. 🔒 Bảo mật: Injection, leak secrets/tokens, thiếu validation.
-3. ⚡ Hiệu năng: N+1 query, blocking calls, rò rỉ bộ nhớ.
-4. 💥 Breaking changes: Phá vỡ signature các hàm/class đang được gọi.
-
-ĐỊNH DẠNG ĐẦU RA BẮT BUỘC (DUY NHẤT 1 KHỐI JSON THEO SCHEMA):
-\`\`\`json
-{
-  "summary": "Tóm tắt (2-3 câu) HOÀN TOÀN bằng Tiếng Việt về chất lượng MR và điểm cần chú ý",
-  "verdict": "APPROVE" | "REQUEST_CHANGES" | "COMMENT",
-  "riskLevel": "LOW" | "MEDIUM" | "HIGH",
-  "comments": [
-    {
-      "path": "đường_dẫn_file",
-      "line": 42,
-      "severity": "CRITICAL" | "WARNING" | "SUGGESTION",
-      "category": "SECURITY" | "BUG" | "PERFORMANCE" | "CLEAN_CODE",
-      "text": "Mô tả vấn đề và rủi ro HOÀN TOÀN bằng Tiếng Việt",
-      "suggestion": "Code gợi ý sửa đổi (kèm giải thích bằng Tiếng Việt nếu cần)"
-    }
-  ]
-}
-\`\`\`
+${buildReviewOutputSchema()}
 `.trim();
   }
 
@@ -137,6 +117,7 @@ TIÊU CHÍ REVIEW:
               : "BUG") as any,
             text: String(c.text || ""),
             suggestion: c.suggestion ? String(c.suggestion) : undefined,
+            evidence: c.evidence ? String(c.evidence) : undefined,
           }))
         : [];
 
@@ -194,6 +175,7 @@ TIÊU CHÍ REVIEW:
       commits: options.commits,
       rawDiff: options.rawDiff,
       impactSummary: options.impactReport?.summary,
+      impactedFiles: options.impactReport?.impactedFiles,
     });
 
     const timeoutMs =

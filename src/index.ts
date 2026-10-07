@@ -5,7 +5,8 @@ import {
   extractModifiedSymbolsFromDiff,
   ImpactAnalyzer,
 } from "./analyzer/impact";
-import { GitLabClient } from "./gitlab";
+import { GitLabClient, shouldPostToGitLab } from "./gitlab";
+import { ClaudeRunner, deriveVerdict, dropFabricatedComments } from "./claude";
 import { GoogleChatNotifier } from "./notifier";
 import { OpenCodeRunner } from "./opencode";
 import { filterDiffs } from "./utils/diff";
@@ -21,6 +22,7 @@ const notifier = new GoogleChatNotifier();
 const workspaceManager = new WorkspaceManager();
 const impactAnalyzer = new ImpactAnalyzer();
 const openCodeRunner = new OpenCodeRunner();
+const claudeRunner = new ClaudeRunner();
 
 process.on("uncaughtException", (error) => {
   console.error("[Fatal] Uncaught Exception:", error);
@@ -32,7 +34,7 @@ process.on("unhandledRejection", (reason, promise) => {
 
 app.use(express.json());
 
-app.get("/", (req, res) => {
+app.get("/", (_req, res) => {
   res.send("GitLab Multi-Agent AI Reviewer is running!");
 });
 
@@ -107,12 +109,51 @@ async function handleAIReview(
     }
 
     let reviewResult;
+    let verificationNote: string | undefined;
+    const useClaude = process.env.USE_CLAUDE === "true";
+    const claudeFallback = process.env.CLAUDE_FALLBACK !== "false";
+    let claudeSucceeded = false;
     const useOpenCode =
       process.env.USE_OPENCODE === "true" ||
       process.env.OPENCODE_ENABLED === "true";
 
+    // Claude CLI (review 2 pass có kiểm chứng) là engine đáng tin nhất; lỗi thì báo, không fallback ngầm
+    if (useClaude) {
+      if (!localRepoPath) {
+        throw new Error(
+          "Claude review cần local workspace nhưng sync thất bại",
+        );
+      }
+      try {
+        const claudeResult = await claudeRunner.runReview({
+          repoPath: localRepoPath,
+          title: mrInfo.title,
+          author: mrInfo.author,
+          repoName: mrInfo.repoName,
+          targetBranch: mrInfo.targetBranch,
+          description: mrInfo.description,
+          commits,
+          rawDiff: localRawDiff,
+          impactReport,
+        });
+        const v = claudeResult.verification;
+        verificationNote = `Claude phát hiện ${v.raised}, kiểm chứng đúng ${v.verified} (loại ${v.droppedNoEvidence} thiếu bằng chứng, ${v.droppedByVerifier} bị phản biện bác bỏ).`;
+        reviewResult = claudeResult;
+        claudeSucceeded = true;
+      } catch (claudeErr) {
+        if (!claudeFallback) throw claudeErr;
+        const reason =
+          claudeErr instanceof Error ? claudeErr.message : String(claudeErr);
+        verificationNote = `⚠️ Claude lỗi (${reason.slice(0, 150)}) nên kết quả dưới đây từ agent miễn phí, KHÔNG được kiểm chứng. Độ tin cậy thấp, nên review thủ công.`;
+        console.warn(
+          `[Claude] Failed, falling back to free agents:`,
+          claudeErr,
+        );
+      }
+    }
+
     // Khởi chạy OpenCode trên VPS nếu được kích hoạt và có local repo
-    if (useOpenCode && localRepoPath) {
+    if (!reviewResult && useOpenCode && localRepoPath) {
       try {
         console.log(
           `[OpenCode] Starting OpenCode review session in VPS repo: ${localRepoPath}...`,
@@ -141,6 +182,7 @@ async function handleAIReview(
 
     // Fallback sang AIClient (Unified / Multi-agent) nếu OpenCode không chạy, gặp lỗi, hoặc bị ngắt quãng giữa chừng
     const isOpenCodeIncomplete =
+      !claudeSucceeded &&
       reviewResult &&
       reviewResult.comments.length === 0 &&
       reviewResult.verdict === "COMMENT" &&
@@ -163,9 +205,52 @@ async function handleAIReview(
       });
     }
 
+    // Kết quả từ agent free: loại comment có evidence không khớp code thật
+    if (!claudeSucceeded && localRepoPath) {
+      const { kept, dropped } = dropFabricatedComments(
+        localRepoPath,
+        reviewResult.comments,
+      );
+      if (dropped > 0) {
+        console.warn(
+          `[AIReview] Dropped ${dropped} comments with fabricated evidence.`,
+        );
+        reviewResult = { ...reviewResult, comments: kept };
+        verificationNote = `${verificationNote ? verificationNote + " " : ""}Đã loại ${dropped} comment có bằng chứng không khớp code thật.`;
+      }
+    }
+
+    // Verdict/risk nhất quán giữa mọi engine: suy ra từ severity thay vì tin model
+    if (reviewResult.comments.length > 0) {
+      reviewResult = {
+        ...reviewResult,
+        ...deriveVerdict(reviewResult.comments),
+      };
+    }
+
     console.log(
       `[AIReview] Completed for MR #${iid}. Verdict: ${reviewResult.verdict}, Risk: ${reviewResult.riskLevel}, Issues: ${reviewResult.comments.length}`,
     );
+
+    // Đăng thẳng lên GitLab các lỗi BUG/CRITICAL. Với agent free chỉ đăng comment đã có evidence khớp code.
+    if (process.env.GITLAB_COMMENTS_ENABLED !== "false") {
+      const toPost = reviewResult.comments.filter(
+        (c) => shouldPostToGitLab(c) && (claudeSucceeded || !!c.evidence),
+      );
+      if (toPost.length > 0) {
+        try {
+          const posted = await gitlab.postReviewComments(
+            projectId,
+            iid,
+            toPost,
+          );
+          console.log(`[GitLab] Posted comments for MR #${iid}:`, posted);
+          verificationNote = `${verificationNote ? verificationNote + " " : ""}Đã đăng ${posted.inline + posted.general} comment BUG/CRITICAL lên GitLab (${posted.skippedDuplicate} trùng, ${posted.failed} lỗi).`;
+        } catch (postErr) {
+          console.error("[GitLab] Failed to post review comments:", postErr);
+        }
+      }
+    }
 
     // 4. Gửi báo cáo phân tích chi tiết về Google Chat (Cards V2)
     console.log(
@@ -184,11 +269,19 @@ async function handleAIReview(
       comments: reviewResult.comments || [],
       commits,
       impactReport,
+      verificationNote,
     });
 
     console.log(`[AIReview] Process finished successfully for MR #${iid}.`);
   } catch (error) {
     console.error("[AIReview] Error in handleAIReview:", error);
+    await notifier.sendFailureNotification({
+      title: mrInfo.title,
+      url: mrInfo.url,
+      repoName: mrInfo.repoName,
+      mrId: iid,
+      error: error instanceof Error ? error.message : String(error),
+    });
   }
 }
 
