@@ -417,7 +417,7 @@ ${list}
       "--model",
       (process.env.CLAUDE_MODEL || "sonnet").trim(),
       "--effort",
-      (process.env.CLAUDE_EFFORT || "high").trim(),
+      (process.env.CLAUDE_EFFORT || "medium").trim(),
     ];
     if (process.env.CLAUDE_MAX_BUDGET_USD) {
       args.push("--max-budget-usd", process.env.CLAUDE_MAX_BUDGET_USD);

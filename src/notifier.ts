@@ -41,18 +41,6 @@ export class GoogleChatNotifier {
     return escaped;
   }
 
-  private getSeverityBadge(severity: string): string {
-    switch (severity) {
-      case "CRITICAL":
-        return "🔴 <b>CRITICAL</b>";
-      case "WARNING":
-        return "🟡 <b>WARNING</b>";
-      case "SUGGESTION":
-      default:
-        return "🔵 <b>SUGGESTION</b>";
-    }
-  }
-
   private getVerdictBadge(verdict?: string): string {
     switch (verdict) {
       case "APPROVE":
@@ -77,6 +65,159 @@ export class GoogleChatNotifier {
     }
   }
 
+  private truncate(text: string, max: number): string {
+    const t = text.trim();
+    return t.length > max ? `${t.slice(0, max - 1)}…` : t;
+  }
+
+  private issueWidgets(c: AIReviewComment): any[] {
+    const widgets: any[] = [
+      {
+        decoratedText: {
+          topLabel: `${this.escapeHtml(c.category)} · ${this.escapeHtml(c.path)}:${c.line}`,
+          text: this.formatSummary(this.truncate(c.text, 900)),
+          wrapText: true,
+        },
+      },
+    ];
+    if (c.suggestion && c.suggestion.trim()) {
+      widgets.push({
+        decoratedText: {
+          topLabel: "💡 Gợi ý sửa",
+          text: `<pre>${this.escapeHtml(this.truncate(c.suggestion, 500))}</pre>`,
+          wrapText: true,
+        },
+      });
+    }
+    return widgets;
+  }
+
+  /** Dựng thẻ Cards V2 gọn: kết luận trên cùng, lỗi nặng trước, gợi ý/commits thu gọn. */
+  public buildReviewCard(data: NotificationPayload): any {
+    const bySeverity = (sev: string) =>
+      data.comments.filter((c) => (c.severity || "SUGGESTION") === sev);
+    const critical = bySeverity("CRITICAL");
+    const warnings = bySeverity("WARNING");
+    const suggestions = data.comments.filter(
+      (c) => c.severity !== "CRITICAL" && c.severity !== "WARNING",
+    );
+
+    const counts =
+      data.comments.length === 0
+        ? "✅ Không phát hiện vấn đề nào"
+        : [
+            critical.length ? `🔴 <b>${critical.length}</b> nghiêm trọng` : "",
+            warnings.length ? `🟡 <b>${warnings.length}</b> cảnh báo` : "",
+            suggestions.length ? `🔵 <b>${suggestions.length}</b> gợi ý` : "",
+          ]
+            .filter(Boolean)
+            .join("  ·  ");
+
+    const overview: any[] = [
+      {
+        decoratedText: {
+          topLabel: "Kết luận",
+          text: `${this.getVerdictBadge(data.verdict)}<br>${this.getRiskBadge(data.riskLevel)}`,
+          wrapText: true,
+        },
+      },
+      { textParagraph: { text: this.formatSummary(data.summary) } },
+      { textParagraph: { text: counts } },
+    ];
+    if (data.verificationNote) {
+      overview.push({
+        textParagraph: {
+          text: `<i>🔎 ${this.escapeHtml(data.verificationNote)}</i>`,
+        },
+      });
+    }
+    overview.push({
+      buttonList: {
+        buttons: [
+          {
+            text: "Xem Merge Request",
+            onClick: { openLink: { url: data.url } },
+          },
+        ],
+      },
+    });
+
+    const sections: any[] = [{ widgets: overview }];
+
+    // Chi tiết đầy đủ cho lỗi nặng và cảnh báo (giới hạn để thẻ không vượt cỡ cho phép của Chat)
+    const MAX_DETAILED = 12;
+    let budget = MAX_DETAILED;
+    const addDetailed = (header: string, items: AIReviewComment[]) => {
+      if (items.length === 0 || budget <= 0) return;
+      const shown = items.slice(0, budget);
+      budget -= shown.length;
+      const widgets: any[] = [];
+      shown.forEach((c, i) => {
+        if (i > 0) widgets.push({ divider: {} });
+        widgets.push(...this.issueWidgets(c));
+      });
+      if (shown.length < items.length) {
+        widgets.push({
+          textParagraph: {
+            text: `<i>… và ${items.length - shown.length} vấn đề khác (xem log của reviewer)</i>`,
+          },
+        });
+      }
+      sections.push({ header: `${header} (${items.length})`, widgets });
+    };
+    addDetailed("🔴 Nghiêm trọng", critical);
+    addDetailed("🟡 Cảnh báo", warnings);
+
+    if (suggestions.length > 0) {
+      sections.push({
+        header: `🔵 Gợi ý (${suggestions.length})`,
+        collapsible: true,
+        uncollapsibleWidgetsCount: 0,
+        widgets: suggestions.slice(0, 15).map((c) => ({
+          textParagraph: {
+            text: `<code>${this.escapeHtml(c.path)}:${c.line}</code> ${this.formatSummary(this.truncate(c.text, 200))}`,
+          },
+        })),
+      });
+    }
+
+    if (data.commits && data.commits.length > 0) {
+      sections.push({
+        header: `📜 Commits (${data.commits.length})`,
+        collapsible: true,
+        uncollapsibleWidgetsCount: 0,
+        widgets: [
+          {
+            textParagraph: {
+              text: data.commits
+                .slice(0, 8)
+                .map(
+                  (c) =>
+                    `• <code>${this.escapeHtml(c.hash)}</code> ${this.escapeHtml(this.truncate(c.message, 100))}`,
+                )
+                .join("<br>"),
+            },
+          },
+        ],
+      });
+    }
+
+    return {
+      cardsV2: [
+        {
+          cardId: "review-notification",
+          card: {
+            header: {
+              title: this.escapeHtml(data.title),
+              subtitle: `${data.repoName} · !${data.mrId} → ${data.targetBranch} · ${data.author}`,
+            },
+            sections,
+          },
+        },
+      ],
+    };
+  }
+
   async sendReviewNotification(data: NotificationPayload): Promise<void> {
     if (!this.webhookUrl) {
       console.warn(
@@ -85,177 +226,7 @@ export class GoogleChatNotifier {
       return;
     }
 
-    const mrInfoWidgets: any[] = [
-      {
-        decoratedText: {
-          topLabel: "Repository",
-          text: `<b>${this.escapeHtml(data.repoName)}</b>`,
-          startIcon: { knownIcon: "STAR" },
-        },
-      },
-      {
-        decoratedText: {
-          topLabel: "Merge Request",
-          text: `#${data.mrId} → <code>${this.escapeHtml(data.targetBranch)}</code>`,
-          startIcon: { knownIcon: "DESCRIPTION" },
-        },
-      },
-      {
-        decoratedText: {
-          topLabel: "Author",
-          text: this.escapeHtml(data.author),
-          startIcon: { knownIcon: "PERSON" },
-        },
-      },
-    ];
-
-    if (data.commits && data.commits.length > 0) {
-      const commitListStr = data.commits
-        .slice(0, 5)
-        .map(
-          (c) =>
-            `• <code>${this.escapeHtml(c.hash)}</code>: ${this.escapeHtml(c.message)} (<i>${this.escapeHtml(c.author)}</i>)`,
-        )
-        .join("<br>");
-      mrInfoWidgets.push({
-        decoratedText: {
-          topLabel: `Commits mới (${data.commits.length})`,
-          text: commitListStr,
-          wrapText: true,
-          startIcon: { knownIcon: "BOOKMARK" },
-        },
-      });
-    }
-
-    const sections: any[] = [
-      {
-        header: "📋 Thông tin Merge Request",
-        widgets: mrInfoWidgets,
-      },
-      {
-        header: "🤖 AI Review Assessment",
-        widgets: [
-          {
-            decoratedText: {
-              topLabel: "Kết luận (Verdict)",
-              text: this.getVerdictBadge(data.verdict),
-              startIcon: { knownIcon: "CONFIRMATION_NUMBER_ICON" },
-            },
-          },
-          {
-            decoratedText: {
-              topLabel: "Mức độ rủi ro (Risk Level)",
-              text: this.getRiskBadge(data.riskLevel),
-              startIcon: { knownIcon: "FLIGHT_DEPARTURE" },
-            },
-          },
-          {
-            textParagraph: {
-              text: this.formatSummary(data.summary),
-            },
-          },
-          {
-            decoratedText: {
-              topLabel: "Tổng số vấn đề phát hiện",
-              text: `<b>${data.comments.length}</b> vấn đề`,
-              startIcon: { knownIcon: "TICKET" },
-            },
-          },
-          ...(data.verificationNote
-            ? [
-                {
-                  textParagraph: {
-                    text: `🔎 ${this.escapeHtml(data.verificationNote)}`,
-                  },
-                },
-              ]
-            : []),
-        ],
-      },
-    ];
-
-    // Render all comments in detail
-    const displayComments = data.comments;
-    if (displayComments.length > 0) {
-      const commentWidgets: any[] = [];
-
-      displayComments.forEach((c, index) => {
-        const severityBadge = this.getSeverityBadge(c.severity || "SUGGESTION");
-        const category = c.category ? `[${this.escapeHtml(c.category)}] ` : "";
-
-        commentWidgets.push({
-          decoratedText: {
-            topLabel: `Issue #${index + 1} - ${category}${severityBadge}`,
-            text: `📍 <code>${this.escapeHtml(c.path)}</code> (Line <b>${c.line}</b>)`,
-            wrapText: true,
-          },
-        });
-
-        commentWidgets.push({
-          textParagraph: {
-            text: this.formatSummary(c.text),
-          },
-        });
-
-        if (c.suggestion && c.suggestion.trim()) {
-          commentWidgets.push({
-            decoratedText: {
-              topLabel: "💡 Đề xuất code sửa đổi:",
-              text: `<pre>${this.escapeHtml(c.suggestion.trim())}</pre>`,
-              wrapText: true,
-            },
-          });
-        }
-
-        if (index < displayComments.length - 1) {
-          commentWidgets.push({
-            textParagraph: {
-              text: "<br>---",
-            },
-          });
-        }
-      });
-
-      sections.push({
-        header: `🔍 Chi tiết vấn đề & Gợi ý sửa (${displayComments.length})`,
-        widgets: commentWidgets,
-      });
-    }
-
-    sections.push({
-      widgets: [
-        {
-          buttonList: {
-            buttons: [
-              {
-                text: "Xem trên GitLab",
-                onClick: {
-                  openLink: {
-                    url: data.url,
-                  },
-                },
-              },
-            ],
-          },
-        },
-      ],
-    });
-
-    const card = {
-      cardsV2: [
-        {
-          cardId: "review-notification",
-          card: {
-            header: {
-              title: this.escapeHtml(data.title),
-              subtitle: "GitLab AI Code Review",
-            },
-            sections: sections,
-          },
-        },
-      ],
-    };
-
+    const card = this.buildReviewCard(data);
     try {
       const response = await fetch(this.webhookUrl, {
         method: "POST",
