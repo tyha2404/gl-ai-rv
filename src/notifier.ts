@@ -1,5 +1,4 @@
 import { AIReviewComment } from "./ai";
-import { ImpactAnalysisReport } from "./analyzer/impact";
 import { GitCommitInfo } from "./workspace";
 
 export interface NotificationPayload {
@@ -14,7 +13,6 @@ export interface NotificationPayload {
   riskLevel?: ("LOW" | "MEDIUM" | "HIGH") | undefined;
   comments: AIReviewComment[];
   commits?: GitCommitInfo[] | undefined;
-  impactReport?: ImpactAnalysisReport | undefined;
   verificationNote?: string | undefined;
 }
 
@@ -175,36 +173,6 @@ export class GoogleChatNotifier {
         ],
       },
     ];
-
-    if (data.impactReport) {
-      const impactWidgets: any[] = [
-        {
-          textParagraph: {
-            text: this.formatSummary(data.impactReport.summary),
-          },
-        },
-      ];
-
-      if (data.impactReport.impactedFiles.length > 0) {
-        const fileListStr = data.impactReport.impactedFiles
-          .slice(0, 8)
-          .map((f) => `📁 <code>${this.escapeHtml(f)}</code>`)
-          .join("<br>");
-        impactWidgets.push({
-          decoratedText: {
-            topLabel: `Các file bị ảnh hưởng gián tiếp (${data.impactReport.impactedFiles.length})`,
-            text: fileListStr,
-            wrapText: true,
-            startIcon: { knownIcon: "MULTIPLE_PEOPLE" },
-          },
-        });
-      }
-
-      sections.push({
-        header: "💥 Phạm vi ảnh hưởng (Impact Analysis)",
-        widgets: impactWidgets,
-      });
-    }
 
     // Render all comments in detail
     const displayComments = data.comments;

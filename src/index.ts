@@ -1,11 +1,13 @@
 import dotenv from "dotenv";
 import express from "express";
-import { AIClient } from "./ai";
+import { AIClient, AIReviewComment } from "./ai";
 import {
   extractModifiedSymbolsFromDiff,
+  ImpactAnalysisReport,
   ImpactAnalyzer,
 } from "./analyzer/impact";
 import { GitLabClient, shouldPostToGitLab } from "./gitlab";
+import { KnowledgeStore } from "./knowledge";
 import { ClaudeRunner, deriveVerdict, dropFabricatedComments } from "./claude";
 import { GoogleChatNotifier } from "./notifier";
 import { OpenCodeRunner } from "./opencode";
@@ -23,6 +25,8 @@ const workspaceManager = new WorkspaceManager();
 const impactAnalyzer = new ImpactAnalyzer();
 const openCodeRunner = new OpenCodeRunner();
 const claudeRunner = new ClaudeRunner();
+const knowledgeStore = new KnowledgeStore();
+const knowledgeEnabled = process.env.KNOWLEDGE_ENABLED !== "false";
 
 process.on("uncaughtException", (error) => {
   console.error("[Fatal] Uncaught Exception:", error);
@@ -37,6 +41,36 @@ app.use(express.json());
 app.get("/", (_req, res) => {
   res.send("GitLab Multi-Agent AI Reviewer is running!");
 });
+
+async function learnFromReview(
+  project: string,
+  repoPath: string,
+  mrInfo: { title: string; repoName: string },
+  rawDiff: string,
+  findings: AIReviewComment[],
+  previousKnowledge: string,
+): Promise<void> {
+  try {
+    await knowledgeStore.withLock(project, async () => {
+      // đọc lại trong lock để không dựa vào bản cũ nếu MR khác vừa học xong
+      const latest = knowledgeStore.load(project) || previousKnowledge;
+      const updated = await claudeRunner.learn({
+        repoPath,
+        repoName: mrInfo.repoName,
+        previousKnowledge: latest,
+        maxChars: knowledgeStore.maxChars,
+        title: mrInfo.title,
+        rawDiff,
+        findings,
+      });
+      if (knowledgeStore.save(project, updated)) {
+        console.log(`[Knowledge] Updated knowledge for ${project}.`);
+      }
+    });
+  } catch (learnErr) {
+    console.warn(`[Knowledge] Learning failed for ${project}:`, learnErr);
+  }
+}
 
 async function handleAIReview(
   projectId: number,
@@ -59,7 +93,6 @@ async function handleAIReview(
     );
 
     let commits: GitCommitInfo[] = [];
-    let impactReport: any = undefined;
     let diffs: any[] = [];
     let localRepoPath = "";
     let localRawDiff = "";
@@ -74,17 +107,6 @@ async function handleAIReview(
       commits = syncResult.commits;
       localRepoPath = syncResult.repoPath;
       localRawDiff = syncResult.rawDiff;
-
-      // 2. Phân tích symbol và quét phạm vi ảnh hưởng (Impact Analysis)
-      if (syncResult.rawDiff) {
-        const modifiedSymbols = extractModifiedSymbolsFromDiff(
-          syncResult.rawDiff,
-        );
-        impactReport = await impactAnalyzer.analyzeImpact(
-          syncResult.repoPath,
-          modifiedSymbols,
-        );
-      }
     } catch (wsErr) {
       console.warn(
         `[AIReview] Local workspace sync notice for MR #${iid}:`,
@@ -107,6 +129,29 @@ async function handleAIReview(
       console.log(`[AIReview] No reviewable diffs found for MR #${iid}.`);
       return;
     }
+
+    // Quét phạm vi ảnh hưởng tốn thời gian (đọc toàn repo) và Claude tự Grep được,
+    // nên chỉ chạy khi cần cho các engine fallback, và chỉ chạy một lần.
+    let impactCache: Promise<ImpactAnalysisReport | undefined> | undefined;
+    const getImpactReport = () => {
+      impactCache ??= (async () => {
+        if (!localRepoPath || !localRawDiff) return undefined;
+        try {
+          return await impactAnalyzer.analyzeImpact(
+            localRepoPath,
+            extractModifiedSymbolsFromDiff(localRawDiff),
+          );
+        } catch (impactErr) {
+          console.warn("[Impact] Analysis failed:", impactErr);
+          return undefined;
+        }
+      })();
+      return impactCache;
+    };
+
+    const projectKnowledge = knowledgeEnabled
+      ? knowledgeStore.load(projectPathWithNamespace)
+      : "";
 
     let reviewResult;
     let verificationNote: string | undefined;
@@ -134,7 +179,7 @@ async function handleAIReview(
           description: mrInfo.description,
           commits,
           rawDiff: localRawDiff,
-          impactReport,
+          projectKnowledge,
         });
         const v = claudeResult.verification;
         verificationNote = `Claude phát hiện ${v.raised}, kiểm chứng đúng ${v.verified} (loại ${v.droppedNoEvidence} thiếu bằng chứng, ${v.droppedByVerifier} bị phản biện bác bỏ).`;
@@ -167,7 +212,8 @@ async function handleAIReview(
           description: mrInfo.description,
           commits,
           rawDiff: localRawDiff,
-          impactReport,
+          impactReport: await getImpactReport(),
+          projectKnowledge,
         });
         console.log(
           `[OpenCode] Review session completed and process stopped cleanly.`,
@@ -201,7 +247,8 @@ async function handleAIReview(
         targetBranch: mrInfo.targetBranch,
         description: mrInfo.description,
         commits,
-        impactReport,
+        impactReport: await getImpactReport(),
+        projectKnowledge,
       });
     }
 
@@ -254,7 +301,7 @@ async function handleAIReview(
 
     // 4. Gửi báo cáo phân tích chi tiết về Google Chat (Cards V2)
     console.log(
-      `[Notifier] Sending review report with impact analysis to Google Chat for MR #${iid}`,
+      `[Notifier] Sending review report to Google Chat for MR #${iid}`,
     );
     await notifier.sendReviewNotification({
       title: mrInfo.title,
@@ -268,11 +315,22 @@ async function handleAIReview(
       riskLevel: reviewResult.riskLevel,
       comments: reviewResult.comments || [],
       commits,
-      impactReport,
       verificationNote,
     });
 
     console.log(`[AIReview] Process finished successfully for MR #${iid}.`);
+
+    // 5. Học từ lần review này (nghiệp vụ, kiến trúc, lỗi hay gặp). Chạy sau khi đã gửi kết quả nên không làm chậm review.
+    if (knowledgeEnabled && claudeSucceeded && localRepoPath) {
+      await learnFromReview(
+        projectPathWithNamespace,
+        localRepoPath,
+        mrInfo,
+        localRawDiff,
+        reviewResult.comments,
+        projectKnowledge,
+      );
+    }
   } catch (error) {
     console.error("[AIReview] Error in handleAIReview:", error);
     await notifier.sendFailureNotification({

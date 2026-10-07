@@ -140,7 +140,6 @@ describe("prompt consistency across engines", () => {
       repoName: "R",
       targetBranch: "main",
       commits: [{ hash: "abc", message: "m", author: "A" }],
-      impactSummary: "2 callers",
     };
     const context = buildContextSection(mr);
     const claude = new ClaudeRunner().buildReviewPrompt(mr);

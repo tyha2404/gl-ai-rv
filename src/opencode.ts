@@ -19,6 +19,7 @@ export interface OpenCodeReviewOptions {
   commits?: GitCommitInfo[] | undefined;
   rawDiff?: string | undefined;
   impactReport?: ImpactAnalysisReport | undefined;
+  projectKnowledge?: string | undefined;
   timeoutMs?: number | undefined;
 }
 
@@ -39,6 +40,7 @@ export class OpenCodeRunner {
     rawDiff?: string | undefined;
     impactSummary?: string | undefined;
     impactedFiles?: string[] | undefined;
+    projectKnowledge?: string | undefined;
   }): string {
     const context = buildContextSection({
       title: options.title,
@@ -49,6 +51,7 @@ export class OpenCodeRunner {
       commits: options.commits,
       impactSummary: options.impactSummary,
       impactedFiles: options.impactedFiles,
+      projectKnowledge: options.projectKnowledge,
     });
 
     return `
@@ -176,6 +179,7 @@ ${buildReviewOutputSchema()}
       rawDiff: options.rawDiff,
       impactSummary: options.impactReport?.summary,
       impactedFiles: options.impactReport?.impactedFiles,
+      projectKnowledge: options.projectKnowledge,
     });
 
     const timeoutMs =

@@ -175,7 +175,7 @@ describe("GoogleChatNotifier", () => {
     );
   });
 
-  it("should render commits and impact analysis section when provided", async () => {
+  it("should render commits and no impact section", async () => {
     process.env.GOOGLE_CHAT_WEBHOOK_URL = "http://webhook.url";
     const notifier = new GoogleChatNotifier();
 
@@ -202,12 +202,6 @@ describe("GoogleChatNotifier", () => {
           author: "Alice",
         },
       ],
-      impactReport: {
-        modifiedSymbols: ["verifyToken"],
-        impactedFiles: ["src/middleware/auth.ts", "src/routes/user.ts"],
-        references: [],
-        summary: "2 external files use verifyToken.",
-      },
       comments: [],
     };
 
@@ -221,18 +215,9 @@ describe("GoogleChatNotifier", () => {
     assert.strictEqual(mrInfoWidgets.length, 4);
     assert.ok(mrInfoWidgets[3].decoratedText.text.includes("1a2b3c4"));
 
-    // Check Impact section exists
-    const impactSection = sections.find((s: any) =>
-      s.header?.includes("Phạm vi ảnh hưởng"),
-    );
-    assert.ok(impactSection);
+    // Phạm vi ảnh hưởng đã được bỏ khỏi thẻ để gọn hơn
     assert.ok(
-      impactSection.widgets[0].textParagraph.text.includes("2 external files"),
-    );
-    assert.ok(
-      impactSection.widgets[1].decoratedText.text.includes(
-        "src/middleware/auth.ts",
-      ),
+      !sections.some((s: any) => s.header?.includes("Phạm vi ảnh hưởng")),
     );
   });
 });

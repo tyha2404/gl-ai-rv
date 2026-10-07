@@ -48,6 +48,7 @@ export interface MRContext {
   targetBranch: string;
   description?: string | undefined;
   customRules?: string | undefined;
+  projectKnowledge?: string | undefined;
   techStack?: string | undefined;
   commits?: GitCommitInfo[] | undefined;
   impactReport?: ImpactAnalysisReport | undefined;
@@ -433,6 +434,7 @@ ${buildReviewOutputSchema()}
       impactedFiles: mrContext?.impactReport?.impactedFiles,
       techStack: mrContext?.techStack || extractTechStackSummary(),
       projectRules: mrContext?.customRules || loadProjectRules(),
+      projectKnowledge: mrContext?.projectKnowledge,
     });
 
     console.log(
